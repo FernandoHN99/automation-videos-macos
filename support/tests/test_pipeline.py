@@ -362,6 +362,22 @@ class TestModoLocal(Base):
         self.assertEqual(int((self.ready / "aula-01" / "material" / "Apostila - Aula 1.pdf").stat().st_mtime), 1_700_000_000)  # data preservada
         self.assertTrue((self.ready / "aula-01" / "materiais.zip").is_file())
 
+    def test_pastas_vazias_do_incoming_sao_removidas(self):
+        make_video(self.inc / "aula" / "mod1" / "a.mp4", seconds=1)
+        (self.inc / "aula" / "mod1" / ".DS_Store").write_bytes(b"x")
+        (self.inc / "aula" / "vazia" / "sub").mkdir(parents=True)
+        self.run_cycle()
+        self.assertEqual([d.name for d in self.inc.iterdir() if not d.name.startswith(".")], [])  # tudo limpo
+        self.assertTrue(self.inc.is_dir())                                                          # a raiz nunca some
+
+    def test_pasta_vazia_recente_ou_com_arquivo_pendente_e_mantida(self):
+        self.cfg["pipeline"]["file_stability_seconds"] = 3600
+        (self.inc / "copiando" / "sub").mkdir(parents=True)      # pasta nova: usuário pode estar copiando
+        make_video(self.inc / "outra" / "a.mp4", seconds=1)      # ainda não estável: continua na fila
+        self.run_cycle()
+        self.assertTrue((self.inc / "copiando" / "sub").is_dir())
+        self.assertTrue((self.inc / "outra" / "a.mp4").exists())
+
     def test_nao_envia_nada_ao_servidor(self):
         make_video(self.inc / "a.mp4"); (self.inc / "x.pdf").write_bytes(b"abc")
         self.remote.down = True  # se tentasse conectar, falharia

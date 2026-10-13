@@ -19,9 +19,9 @@ Idioma de trabalho: português (Brasil). Leia o [README.md](README.md) para uso 
 - **Modo padrão: `pipeline.mode = "local"`.** Vídeos → comprimidos (libx264, perfil `compact` = CRF 23, resolução e FPS originais; se economizar < 15% copia o original). Outros arquivos (PDF, imagem, zip...) → copiados iguais, SHA-256 conferido, datas preservadas. Nada vai por SSH.
 - **Modo `upload` (opcional, desligado):** envia vídeos ao HP Mini por `ssh cat` retomável, verificando UUID `6ACE-6E04`/exFAT/escrita/espaço antes de cada envio, SHA-256, `mv -n` atômico via `.pipeline-tmp/`. Testado de ponta a ponta com sucesso (clipe de 6,4 MB). Chave dedicada `~/.ssh/videopipeline_ed25519` já autorizada no servidor.
 - **LaunchAgent `com.hpmini.videopipeline` carregado**: roda ao carregar e a cada 15 min, `/opt/homebrew/bin/python3`, sem root, sem processo residente. Só funciona com a sessão do usuário ativa.
-- Perfil `compact` e `archive_originals_after_upload = true` aprovados pelo usuário.
-- Primeiro teste real em andamento: `incoming/aula-01` (1 vídeo VP9 1080p de 2h11, 1,2 GB + ~230 arquivos de material). Um processamento por vez; os arquivos pequenos só são copiados depois do vídeo grande.
-- Pendente: confirmar o resultado desse teste (`ready/`, `originals/`, `incoming/` vazio de arquivos processados); testar reboot do Mac; teste com o servidor desligado só se o modo upload for usado.
+- Perfil `compact` e `archive_originals_after_upload = true` aprovados pelo usuário. Fluxo: validado/copiado → original vai de `incoming/` para `originals/`; `ready/` fica com os vídeos finais e os arquivos copiados; pastas vazias de `incoming/` são removidas (só as sem alteração há `file_stability_seconds`).
+- **Teste real concluído (2026-10-13):** `incoming/aula-01` (vídeo VP9 1080p de 2h11, 1,2 GB → 828 MB H.264, −30,7%, 27 min; 236 materiais idênticos por SHA-256 e datas preservadas). `incoming/` ficou limpo.
+- Pendente: o usuário arrastar `ready/` para o microSD; testar reboot do Mac.
 
 ## Estrutura
 
@@ -30,7 +30,7 @@ main.py                      pipeline + CLI (arquivo único)
 support/config/config.json   configuração
 support/launchd/             modelo do plist
 support/scripts/             install.sh (--load ativa), uninstall.sh, healthcheck.sh
-support/tests/               40 testes: python3 -m unittest discover -s support/tests
+support/tests/               42 testes: python3 -m unittest discover -s support/tests
 my-videos/                   dados, ignorados pelo git (.gitkeep mantém a estrutura)
   incoming/ processing/ ready/ originals/ logs/ state/
 ```

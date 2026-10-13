@@ -541,6 +541,21 @@ class Pipeline:
         os.replace(src, dst)  # mesmo filesystem (my-videos/ e incoming/ no mesmo volume)
         self.log.info("Original arquivado: originals/%s", dst.relative_to(self.d["originals"]))
 
+    def prune_empty_dirs(self):
+        """Remove de incoming/ as pastas que ficaram vazias (só com .DS_Store) depois de arquivar os originais.
+        Só mexe em pasta sem alteração há `file_stability_seconds`, para não atrapalhar uma cópia em andamento."""
+        stab = self.cfg["pipeline"].get("file_stability_seconds", 180)
+        inc, now = self.d["incoming"], time.time()
+        mtimes = {x: x.stat().st_mtime for x in inc.rglob("*") if x.is_dir()}  # antes de remover: rmdir altera o mtime do pai
+        for d in sorted(mtimes, key=lambda x: len(x.parts), reverse=True):  # das mais profundas para as mais rasas
+            if d.name.startswith(".") or now - mtimes[d] < stab:
+                continue
+            rest = [c for c in d.iterdir() if c.name != ".DS_Store"]
+            if not rest:
+                (d / ".DS_Store").unlink(missing_ok=True)
+                d.rmdir()
+                self.log.info("Pasta vazia removida de incoming/: %s", d.relative_to(inc))
+
     # -- execução
     def run_once(self):
         lock = open(self.d["state"] / "pipeline.lock", "w")
@@ -558,6 +573,8 @@ class Pipeline:
             if not self.local_mode:
                 for job in self.jobs("UPLOAD_PENDING"):
                     self.upload(job)
+            if self.cfg["pipeline"].get("archive_originals_after_upload", False):
+                self.prune_empty_dirs()
         finally:
             lock.close()
         return True
