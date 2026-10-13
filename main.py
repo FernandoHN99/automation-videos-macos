@@ -568,7 +568,8 @@ class Pipeline:
         try:  # o lock é do kernel: some sozinho se o processo morrer, nunca fica "preso"
             self.recover()
             self.scan()
-            for job in self.jobs("QUEUED"):
+            # arquivos que não são vídeo primeiro (rápidos); vídeos por último, do menor para o maior tempo de espera
+            for job in sorted(self.jobs("QUEUED"), key=lambda j: (self.is_video(j["src_rel"]), j["id"])):
                 self.process(job)
             if not self.local_mode:
                 for job in self.jobs("UPLOAD_PENDING"):

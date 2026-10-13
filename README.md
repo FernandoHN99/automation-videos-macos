@@ -30,7 +30,7 @@ flowchart LR
 1. Você copia uma pasta (ou vários vídeos) para `my-videos/incoming/`.
 2. O **LaunchAgent** do macOS roda a cada 15 min e detecta arquivos novos, esperando terminarem de copiar.
 3. **Vídeos** são analisados, comprimidos e **validados** (resolução, duração, codec, áudio). Se a economia for menor que 15%, o original é copiado como está, sem perda geracional.
-4. **Qualquer outro arquivo** (PDF, imagem, zip, planilha...) é copiado igual, conferido por SHA-256, com a data original preservada.
+4. **Qualquer outro arquivo** (PDF, imagem, zip, planilha...) é copiado igual, conferido por SHA-256, com a data original preservada. Eles são processados **primeiro**; os vídeos ficam por último, para os materiais não esperarem uma conversão longa.
 5. O resultado fica em `my-videos/ready/`, **com a mesma estrutura de pastas**, pronto para você arrastar para o microSD.
 6. Depois de pronto e validado, cada original é **movido** de `incoming/` para `my-videos/originals/`, e as pastas que ficarem vazias em `incoming/` são removidas. Tudo fica registrado em SQLite e em logs.
 
@@ -45,7 +45,7 @@ flowchart LR
 | ♻️ **Recupera de falhas** | queda de energia no meio: o job volta para a fila e nada se perde; erros tentam de novo com espera crescente (5 min → 6 h) |
 | 🛰️ **Upload SSH opcional** | modo `upload`: verifica UUID/exFAT do microSD, SHA-256 e publica de forma atômica |
 | 🔒 **Uma execução por vez** | `flock` do kernel: nunca fica "preso", nunca converte dois vídeos juntos |
-| 🧪 **Testado** | 42 testes automatizados + execução real de ponta a ponta |
+| 🧪 **Testado** | 43 testes automatizados + execução real de ponta a ponta |
 
 ## Estrutura do projeto
 
@@ -187,7 +187,7 @@ Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/vid
 
 - O **LaunchAgent roda na sessão do usuário**: com o Mac desligado ou sem login, nada processa; ao voltar, as pendências continuam.
 - Pastas vazias não são recriadas em `ready/`, só as que contêm arquivos.
-- Uma pasta com um vídeo de horas bloqueia a fila: os arquivos pequenos só são copiados depois que ele terminar (um processamento por vez).
+- Um processamento por vez: vídeos longos ocupam a fila por um tempo, mas os arquivos que não são vídeo sempre passam na frente.
 - Legendas e streams extras não são copiados para o MP4 de saída (o log registra isso). Só o primeiro vídeo e o primeiro áudio.
 - O File Browser original está arquivado e não recebe correções de segurança: não o exponha diretamente à internet.
 
@@ -197,7 +197,7 @@ Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/vid
 python3 -m unittest discover -s support/tests -v
 ```
 
-42 testes (~10 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
+43 testes (~10 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
 
 ## Registro de testes reais (2026-10-13)
 

@@ -30,12 +30,13 @@ main.py                      pipeline + CLI (arquivo único)
 support/config/config.json   configuração
 support/launchd/             modelo do plist
 support/scripts/             install.sh (--load ativa), uninstall.sh, healthcheck.sh
-support/tests/               42 testes: python3 -m unittest discover -s support/tests
+support/tests/               43 testes: python3 -m unittest discover -s support/tests
 my-videos/                   dados, ignorados pelo git (.gitkeep mantém a estrutura)
   incoming/ processing/ ready/ originals/ logs/ state/
 ```
 
 - Estado e histórico: `my-videos/state/pipeline.sqlite3` (não apagar: evita reprocessar).
+- Ordem da fila: arquivos que não são vídeo primeiro, vídeos por último (cada original vai para `originals/` assim que o seu arquivo fica pronto).
 - Estados dos jobs: WAITING_STABLE, QUEUED, PROCESSING, COMPLETED, FAILED, SUPERSEDED (+ UPLOAD_PENDING, UPLOADING no modo upload). Retentativas por `next_attempt` com backoff 5 min → 6 h.
 - Colunas `upload_path`/`remote_rel` do SQLite guardam, no modo local, o caminho do arquivo em `ready/` (nomes herdados do modo upload).
 - Nomes de saída são ajustados para exFAT (`" * : < > ? \ |` viram `_`, Unicode NFC).

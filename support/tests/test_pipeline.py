@@ -378,6 +378,16 @@ class TestModoLocal(Base):
         self.assertTrue((self.inc / "copiando" / "sub").is_dir())
         self.assertTrue((self.inc / "outra" / "a.mp4").exists())
 
+    def test_arquivos_que_nao_sao_video_vem_antes_dos_videos(self):
+        make_video(self.inc / "aula" / "a-video.mp4", seconds=1)       # primeiro em ordem alfabética
+        (self.inc / "aula" / "b-material.pdf").write_bytes(b"pdf")
+        make_video(self.inc / "aula" / "c-video.mp4", seconds=1)
+        (self.inc / "aula" / "d-planilha.xlsx").write_bytes(b"xls")
+        ordem, orig = [], self.p.process
+        self.p.process = lambda job: (ordem.append(job["src_rel"]), orig(job))[1]
+        self.run_cycle()
+        self.assertEqual(ordem, ["aula/b-material.pdf", "aula/d-planilha.xlsx", "aula/a-video.mp4", "aula/c-video.mp4"])
+
     def test_nao_envia_nada_ao_servidor(self):
         make_video(self.inc / "a.mp4"); (self.inc / "x.pdf").write_bytes(b"abc")
         self.remote.down = True  # se tentasse conectar, falharia
