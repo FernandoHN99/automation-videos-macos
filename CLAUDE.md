@@ -57,7 +57,7 @@ Lições: fonte já H.264 em bitrate moderado → recomprimir com CRF ≤20 **au
 
 ## Arquitetura planejada
 
-Estrutura (agora em `my-videos/` dentro do projeto, não em `~/VideoPipeline`): `incoming/ processing/ ready/ originals/ failed/ logs/ state/pipeline.sqlite3 scripts/ support/config.json tests/ docs/ launchd/`. Código-fonte fica neste repositório de trabalho e é instalado/linkado em `~/VideoPipeline`.
+Estrutura final: ver seção "Código" abaixo (`main.py` na raiz, `support/`, `my-videos/`). O plano original previa `scripts/ config/ tests/ docs/ launchd/` e `~/VideoPipeline`, já substituídos.
 
 - Estados: DISCOVERED, WAITING_STABLE, ANALYZING, QUEUED, PROCESSING, VALIDATING, READY, UPLOAD_PENDING, UPLOADING, VERIFYING_REMOTE, COMPLETED, RETRY_PENDING, FAILED. Só COMPLETED após validar o arquivo remoto.
 - Estabilidade de arquivo (tamanho+mtime) por 2–5 min antes de processar; extensões .mp4 .mov .mkv .m4v .webm; ignorar temporários.
