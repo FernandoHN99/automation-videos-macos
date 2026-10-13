@@ -246,6 +246,15 @@ class Pipeline:
         self.remote = remote or SSHRemote(cfg, self.log)
         self.ffmpeg = cfg["encoding"].get("ffmpeg", "ffmpeg")
         self.ffprobe = cfg["encoding"].get("ffprobe", "ffprobe")
+        self.exts = {e.lower() for e in p.get("extensions", [".mp4", ".mov", ".mkv", ".m4v", ".webm"])}
+
+    @property
+    def local_mode(self):
+        """local: comprime vídeos e copia o resto para ready/ (envio manual). upload: envia ao HP Mini por SSH."""
+        return self.cfg["pipeline"].get("mode", "local") == "local"
+
+    def is_video(self, rel):
+        return Path(rel).suffix.lower() in self.exts
 
     def _logger(self):
         log = logging.getLogger(f"videopipeline.{self.home}")
@@ -288,17 +297,18 @@ class Pipeline:
             new = "QUEUED" if j["state"] == "PROCESSING" else "UPLOAD_PENDING"
             self.log.warning("recuperando job interrompido %s: %s -> %s", j["src_rel"], j["state"], new)
             self.set(j["id"], state=new)
-        for f in self.d["processing"].glob("*.mp4"):  # só temporários nossos (<id>.mp4), sob o lock
-            if re.fullmatch(r"\d+\.mp4", f.name):
+        for f in self.d["processing"].iterdir():  # só temporários nossos (<id>.mp4 / <id>.copy), sob o lock
+            if re.fullmatch(r"\d+\.(mp4|copy)", f.name):
                 f.unlink()
 
     # -- descoberta
     def scan(self):
         stab = self.cfg["pipeline"].get("file_stability_seconds", 180)
-        exts = {e.lower() for e in self.cfg["pipeline"].get("extensions", [".mp4", ".mov", ".mkv", ".m4v", ".webm"])}
+        copy_other = self.local_mode and self.cfg["pipeline"].get("copy_non_video", True)
         inc, now, new = self.d["incoming"], time.time(), 0
         for p in sorted(inc.rglob("*")):
-            if not p.is_file() or p.name.startswith(".") or p.suffix.lower() not in exts or p.name.lower().endswith(TEMP_SUFFIXES):
+            hidden = any(part.startswith(".") for part in p.relative_to(inc).parts)  # .DS_Store, ._x, pastas ocultas
+            if not p.is_file() or hidden or p.name.lower().endswith(TEMP_SUFFIXES) or (not copy_other and not self.is_video(p.name)):
                 continue
             rel, st = p.relative_to(inc).as_posix(), p.stat()
             row = self.db.execute("SELECT * FROM jobs WHERE src_rel=? AND size=? AND mtime_ns=?",
@@ -355,6 +365,8 @@ class Pipeline:
             return self.set(jid, state="SUPERSEDED")
         self.set(jid, state="PROCESSING")
         try:
+            if not self.is_video(rel):
+                return self.finish_local(job, src, rel, "copy", move=False, fields=dict(original_size=st.st_size, output_size=st.st_size, savings_bytes=0, savings_percent=0.0))
             info = probe(src, self.ffprobe)
             name, prof = self.profile()
             self.log.info("Input: %s | %dx%d@%s | %s/%s | %s | %.0fs", human(st.st_size), info["width"], info["height"],
@@ -388,6 +400,9 @@ class Pipeline:
             common = dict(profile=name, original_size=st.st_size, duration=info["duration"], resolution=f"{info['width']}x{info['height']}",
                           video_codec=info["vcodec"], audio_codec=info["acodec"], encoding_time=enc_time)
             if pct >= self.cfg["encoding"].get("minimum_savings_percent", 15):
+                if self.local_mode:
+                    return self.finish_local(job, tmp, Path(rel).with_suffix(".mp4").as_posix(), "encoded", move=True,
+                                             fields=dict(output_size=out_size, savings_bytes=saved, savings_percent=pct, **common))
                 dst = self.d["ready"] / Path(rel).with_suffix(".mp4")
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(tmp, dst)  # mesmo filesystem: atômico
@@ -397,6 +412,9 @@ class Pipeline:
             else:
                 tmp.unlink(missing_ok=True)
                 self.log.info("Economia abaixo do mínimo: mantendo o original (sem perda geracional)")
+                if self.local_mode:
+                    return self.finish_local(job, src, rel, "keep_original", move=False,
+                                             fields=dict(output_size=st.st_size, savings_bytes=0, savings_percent=0.0, **common))
                 self.set(jid, state="UPLOAD_PENDING", decision="keep_original", output_size=st.st_size, savings_bytes=0,
                          savings_percent=0.0, upload_path=str(src), remote_rel=safe_rel(rel), attempts=0, next_attempt=0,
                          error=None, **common)
@@ -404,6 +422,45 @@ class Pipeline:
             self.fail(job, e, "QUEUED")
         except Exception as e:  # erro inesperado: não perde o job
             self.fail(job, Transient(repr(e)), "QUEUED")
+
+    # -- modo local: tudo termina em ready/
+    def place(self, path, rel_out, jid, move):
+        """Põe `path` em ready/<rel_out> sem nunca sobrescrever: idêntico = reaproveita; diferente = sufixo ' (n)'.
+        Cópia de arquivo que não é vídeo é feita via processing/ e verificada por SHA-256 antes de aparecer em ready/."""
+        size, sha = path.stat().st_size, sha256_file(path)
+        base = self.d["ready"] / safe_rel(rel_out)
+        base.parent.mkdir(parents=True, exist_ok=True)
+        dst, n = base, 1
+        while dst.exists():
+            if dst.stat().st_size == size and sha256_file(dst) == sha:
+                self.log.info("Já existe idêntico em ready/: %s", dst.relative_to(self.d["ready"]))
+                if move:
+                    path.unlink(missing_ok=True)
+                return dst, sha
+            dst = base.with_name(f"{base.stem} ({n}){base.suffix}")
+            n += 1
+        if move:
+            os.replace(path, dst)  # mesmo filesystem: atômico
+        else:
+            tmp = self.d["processing"] / f"{jid}.copy"
+            shutil.copy2(path, tmp)  # preserva datas
+            if tmp.stat().st_size != size or sha256_file(tmp) != sha:
+                tmp.unlink(missing_ok=True)
+                raise Transient("cópia divergente do original")
+            os.replace(tmp, dst)
+        return dst, sha
+
+    def finish_local(self, job, path, rel_out, decision, move, fields):
+        try:
+            dst, sha = self.place(path, rel_out, job["id"], move)
+        except (Transient, Permanent) as e:
+            return self.fail(job, e, "QUEUED")
+        out = dst.relative_to(self.d["ready"]).as_posix()
+        self.set(job["id"], state="COMPLETED", decision=decision, upload_path=str(dst), remote_rel=out, sha256=sha,
+                 attempts=0, next_attempt=0, error=None, **fields)
+        self.log.info("Pronto em ready/%s [%s]. Job completed", out, decision)
+        if self.cfg["pipeline"].get("archive_originals_after_upload", False):
+            self.archive_original(job)
 
     # -- upload
     def upload(self, job):
@@ -490,8 +547,9 @@ class Pipeline:
             self.scan()
             for job in self.jobs("QUEUED"):
                 self.process(job)
-            for job in self.jobs("UPLOAD_PENDING"):
-                self.upload(job)
+            if not self.local_mode:
+                for job in self.jobs("UPLOAD_PENDING"):
+                    self.upload(job)
         finally:
             lock.close()
         return True

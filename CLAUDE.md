@@ -100,3 +100,13 @@ Repositório local (branch `main`), sem remote. `.gitignore` exclui `my-videos/*
 ## Decisões do usuário
 
 - 2026-10-13: perfil `compact` (CRF 23) aprovado. `archive_originals_after_upload = true` (original é movido, nunca apagado, de `incoming/` para `originals/` após envio verificado).
+
+## Mudança de fluxo (2026-10-13, pedido do usuário)
+
+**Modo padrão agora é `pipeline.mode = "local"`**: o script só comprime vídeos e joga em `my-videos/ready/`; arquivos que não são vídeo são copiados IGUAIS (SHA-256, datas preservadas) para `ready/`, mesma estrutura de pastas. **O usuário faz o upload manualmente**, arrastando `ready/` para o microSD. Nada é enviado por SSH. O envio SSH (verify_storage, UUID 6ACE-6E04, `.pipeline-tmp`, SHA-256, `mv -n`) continua no código e testado, atrás de `"mode": "upload"`.
+- Originais (vídeo e não vídeo) vão de `incoming/` para `originals/` depois de prontos (`archive_originals_after_upload = true`).
+- Ocultos (`.DS_Store`, `._x`, pastas com `.`) e temporários são ignorados.
+- LaunchAgent `com.hpmini.videopipeline` está **carregado** (15 min, python3 estável do Homebrew).
+- 40 testes (`python3 -m unittest discover -s tests`).
+- Primeiro teste real em andamento: pasta `aula-01` (vídeo VP9 1080p 2h11, 1,2 GB + ~230 arquivos de material).
+- Servidor: apagados `.Spotlight-V100`, `.fseventsd`, `._video.mp4` com autorização; ficam `video.mp4`, `_pipeline-teste/`, `.pipeline-tmp/`.

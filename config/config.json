@@ -1,6 +1,8 @@
 {
   "pipeline": {
     "home": "my-videos",
+    "mode": "local",
+    "copy_non_video": true,
     "file_stability_seconds": 180,
     "max_encode_attempts": 3,
     "archive_originals_after_upload": true,

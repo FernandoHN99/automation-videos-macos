@@ -77,6 +77,7 @@ class Base(unittest.TestCase):
         self.cfg = copy.deepcopy(BASE_CFG)
         self.cfg["pipeline"]["home"] = str(self.tmp / "home")
         self.cfg["pipeline"]["file_stability_seconds"] = 0
+        self.cfg["pipeline"]["mode"] = "upload"  # os testes antigos cobrem o envio por SSH (modo opcional)
         self.cfg["encoding"]["profiles"]["balanced"] = {"crf": 28, "preset": "ultrafast"}
         self.cfg["encoding"]["nice"] = 0
         self.remote = FakeRemote(self.tmp / "remote")
@@ -334,6 +335,72 @@ class TestConcorrenciaEDryRun(Base):
         self.assertEqual(self.jobs(), [])
         self.assertEqual(self.remote.sends, 0)
         p.db.close()
+
+
+class TestModoLocal(Base):
+    """Modo padrão: comprime vídeos e copia o resto para ready/; o envio ao HP Mini é manual."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg["pipeline"]["mode"] = "local"
+        self.ready = self.p.d["ready"]
+
+    def test_video_comprimido_e_outros_arquivos_copiados_iguais(self):
+        make_video(self.inc / "aula-01" / "aula.mp4")
+        pdf = self.inc / "aula-01" / "material" / "Apostila - Aula 1.pdf"
+        pdf.parent.mkdir(parents=True); pdf.write_bytes(os.urandom(5000))
+        os.utime(pdf, (1_700_000_000, 1_700_000_000))
+        zipf = self.inc / "aula-01" / "materiais.zip"; zipf.write_bytes(os.urandom(3000))
+        self.run_cycle()
+        self.assertEqual({j["state"] for j in self.jobs()}, {"COMPLETED"})
+        self.assertTrue((self.ready / "aula-01" / "aula.mp4").is_file())
+        self.assertLess((self.ready / "aula-01" / "aula.mp4").stat().st_size, 0.85 * (self.p.d["originals"] / "aula-01" / "aula.mp4").stat().st_size)
+        self.assertEqual((self.ready / "aula-01" / "material" / "Apostila - Aula 1.pdf").read_bytes(), (self.p.d["originals"] / "aula-01" / "material" / "Apostila - Aula 1.pdf").read_bytes())
+        self.assertEqual(int((self.ready / "aula-01" / "material" / "Apostila - Aula 1.pdf").stat().st_mtime), 1_700_000_000)  # data preservada
+        self.assertTrue((self.ready / "aula-01" / "materiais.zip").is_file())
+
+    def test_nao_envia_nada_ao_servidor(self):
+        make_video(self.inc / "a.mp4"); (self.inc / "x.pdf").write_bytes(b"abc")
+        self.remote.down = True  # se tentasse conectar, falharia
+        self.run_cycle()
+        self.assertEqual(self.remote.sends, 0)
+        self.assertEqual({j["state"] for j in self.jobs()}, {"COMPLETED"})
+        self.assertEqual(list(self.remote.root.rglob("*")) if self.remote.root.exists() else [], [])
+
+    def test_original_vai_para_originals_e_incoming_esvazia(self):
+        make_video(self.inc / "a.mp4"); (self.inc / "b.txt").write_text("oi"); self.run_cycle()
+        self.assertEqual([f.name for f in self.inc.rglob("*") if f.is_file() and not f.name.startswith(".")], [])
+        self.assertTrue((self.p.d["originals"] / "a.mp4").exists() and (self.p.d["originals"] / "b.txt").exists())
+
+    def test_ocultos_e_temporarios_ignorados(self):
+        for n in (".DS_Store", "._a.mp4", "x.mp4.part", "y.crdownload"):
+            (self.inc / n).write_bytes(b"1")
+        (self.inc / ".oculta").mkdir(); (self.inc / ".oculta" / "z.pdf").write_bytes(b"1")
+        self.run_cycle()
+        self.assertEqual(self.jobs(), [])
+
+    def test_sem_economia_copia_original_para_ready(self):
+        make_video(self.inc / "magro.mp4", crf=45); magro = (self.inc / "magro.mp4").read_bytes()
+        self.cfg["encoding"]["profiles"]["balanced"] = {"crf": 10, "preset": "ultrafast"}
+        self.run_cycle()
+        j = self.jobs()[0]
+        self.assertEqual((j["state"], j["decision"]), ("COMPLETED", "keep_original"))
+        self.assertEqual((self.ready / "magro.mp4").read_bytes(), magro)
+
+    def test_nunca_sobrescreve_em_ready(self):
+        self.ready.mkdir(exist_ok=True); (self.ready / "x.pdf").write_bytes(b"antigo diferente")
+        (self.inc / "x.pdf").write_bytes(b"novo"); self.run_cycle()
+        self.assertEqual((self.ready / "x.pdf").read_bytes(), b"antigo diferente")
+        self.assertEqual((self.ready / "x (1).pdf").read_bytes(), b"novo")
+
+    def test_idempotente(self):
+        (self.inc / "x.pdf").write_bytes(b"novo"); make_video(self.inc / "a.mp4")
+        self.run_cycle(); self.run_cycle(); self.run_cycle()
+        self.assertEqual(len(self.jobs()), 2)
+
+    def test_nome_com_caractere_invalido_no_exfat_e_ajustado(self):
+        (self.inc / "Aula: parte 1?.pdf").write_bytes(b"x"); self.run_cycle()
+        self.assertTrue((self.ready / "Aula_ parte 1_.pdf").exists())
 
 
 class TestUtilidades(unittest.TestCase):

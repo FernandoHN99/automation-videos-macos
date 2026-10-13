@@ -1,8 +1,10 @@
 # 🎬 VideoPipeline
 
-**Jogue vídeos numa pasta. O Mac comprime, valida e envia para o seu servidor caseiro. Sem comandos.**
+**Jogue uma pasta de aula em `incoming/`. O Mac comprime os vídeos, copia o resto igual e deixa tudo pronto em `ready/`. Você só arrasta para o microSD.**
 
-Automação local para macOS que comprime vídeos com **FFmpeg** (sem perder a legibilidade de código na tela) e os publica por **SSH** num servidor Debian antigo (HP Mini) que roda o [File Browser](https://github.com/filebrowser/filebrowser). Toda a conversão acontece no Mac; o servidor só armazena e entrega.
+Automação local para macOS que comprime vídeos com **FFmpeg** (sem perder a legibilidade de código na tela) e entrega a pasta pronta em `my-videos/ready/`, com a mesma estrutura de subpastas. O arquivo vai para o servidor Debian (HP Mini, com [File Browser](https://github.com/filebrowser/filebrowser)) **manualmente**: você arrasta `ready/` para o microSD. Toda a conversão acontece no Mac.
+
+> O envio automático por SSH (com verificação de UUID do microSD, SHA-256 e publicação atômica) continua no código, mas desligado. Veja [Modo upload](#modo-upload-opcional).
 
 `Python 3` · `FFmpeg` · `SSH` · `SQLite` · `launchd` — zero dependências pip, zero Docker.
 
@@ -12,40 +14,38 @@ Automação local para macOS que comprime vídeos com **FFmpeg** (sem perder a l
 
 ```mermaid
 flowchart LR
-    A[my-videos/incoming/] -->|estável por 3 min| B[ffprobe]
-    B --> C[ffmpeg libx264]
-    C --> D{economizou<br/>≥ 15%?}
-    D -->|sim| E[valida saída]
-    D -->|não| F[mantém o original]
-    E --> G[(verifica microSD<br/>UUID + exFAT)]
-    F --> G
-    G --> H[ssh cat → .pipeline-tmp]
-    H --> I{SHA-256<br/>confere?}
-    I -->|sim| J[mv -n → /srv/videos]
-    I -->|não| K[tenta de novo<br/>backoff]
-    J --> L[File Browser<br/>celular / PC / tablet]
+    A[my-videos/incoming/<br/>pasta com vídeos e materiais] -->|estável por 3 min| B{é vídeo?}
+    B -->|não: pdf, zip, imagem...| C[copia igual<br/>confere SHA-256]
+    B -->|sim| D[ffprobe + ffmpeg<br/>libx264 CRF 23]
+    D --> E{economizou<br/>≥ 15%?}
+    E -->|sim| F[valida saída]
+    E -->|não| G[copia o original]
+    C --> H[my-videos/ready/]
+    F --> H
+    G --> H
+    H -.->|você arrasta| I[microSD / HP Mini]
+    A -.->|depois de pronto| J[my-videos/originals/]
 ```
 
-1. Você copia um vídeo (pode ser uma pasta inteira) para `my-videos/incoming/`.
+1. Você copia uma pasta (ou vários vídeos) para `my-videos/incoming/`.
 2. O **LaunchAgent** do macOS roda a cada 15 min e detecta arquivos novos, esperando terminarem de copiar.
-3. O vídeo é analisado, comprimido e **validado** (resolução, duração, codec, áudio).
-4. Se a economia for menor que 15%, o original é enviado como está, sem perda geracional.
-5. Antes de **cada** envio, o servidor é verificado: `/srv/videos` precisa ser o microSD certo.
-6. O arquivo sobe para uma área temporária, é conferido por SHA-256 e só então publicado, de forma atômica.
-7. Tudo fica registrado em SQLite e em logs com rotação.
+3. **Vídeos** são analisados, comprimidos e **validados** (resolução, duração, codec, áudio). Se a economia for menor que 15%, o original é copiado como está, sem perda geracional.
+4. **Qualquer outro arquivo** (PDF, imagem, zip, planilha...) é copiado igual, conferido por SHA-256, com a data original preservada.
+5. O resultado fica em `my-videos/ready/`, **com a mesma estrutura de pastas**, pronto para você arrastar para o microSD.
+6. Os originais são movidos para `my-videos/originals/` e tudo fica registrado em SQLite e em logs.
 
 ## Recursos
 
 | | |
 |---|---|
-| 📁 **Preserva pastas** | `incoming/Python/Aula 01.mp4` → `/srv/videos/Python/Aula 01.mp4`, em qualquer profundidade |
+| 📁 **Preserva pastas** | `incoming/Python/Aula 01.mp4` → `ready/Python/Aula 01.mp4`, em qualquer profundidade |
+| 📎 **Copia o resto igual** | PDFs, imagens, zips e planilhas vão junto, byte a byte (SHA-256) |
 | 🔍 **Texto nítido** | libx264 CRF 23, resolução e FPS originais, sem filtros de nitidez |
-| 🛡️ **Verifica o microSD** | recusa o envio se `/srv/videos` não for o dispositivo com o UUID esperado, em exFAT, gravável e com espaço |
-| ⚛️ **Upload atômico e retomável** | `.part` → SHA-256 → `mv -n`. Arquivo parcial nunca aparece na biblioteca |
-| 🚫 **Nunca sobrescreve** | nome existente idêntico = já enviado; diferente = salva como `nome_<hash>.mp4` |
-| ♻️ **Recupera de falhas** | queda de energia, rede ou servidor desligado: nada se perde, retoma com backoff (5 min → 6 h) |
+| 🚫 **Nunca sobrescreve** | nome já existente em `ready/`: idêntico = reaproveita; diferente = `nome (1).ext` |
+| ♻️ **Recupera de falhas** | queda de energia no meio: o job volta para a fila e nada se perde; erros tentam de novo com espera crescente (5 min → 6 h) |
+| 🛰️ **Upload SSH opcional** | modo `upload`: verifica UUID/exFAT do microSD, SHA-256 e publica de forma atômica |
 | 🔒 **Uma execução por vez** | `flock` do kernel: nunca fica "preso", nunca converte dois vídeos juntos |
-| 🧪 **Testado** | 32 testes automatizados + execução real de ponta a ponta |
+| 🧪 **Testado** | 40 testes automatizados + execução real de ponta a ponta |
 
 ## Estrutura do projeto
 
@@ -63,8 +63,8 @@ flowchart LR
 ├── CLAUDE.md                 # contexto técnico do projeto
 └── my-videos/                # ← seus dados (ignorados pelo git)
     ├── incoming/             #   coloque os vídeos aqui
-    ├── processing/           #   conversões em andamento (temporário)
-    ├── ready/                #   comprimidos, aguardando envio
+    ├── processing/           #   conversões/cópias em andamento (temporário)
+    ├── ready/                #   ✅ RESULTADO: arraste daqui para o microSD
     ├── originals/            #   originais arquivados após o envio verificado
     ├── failed/               #   reservado
     ├── logs/                 #   pipeline.log, errors.log
@@ -75,50 +75,21 @@ flowchart LR
 
 ### Requisitos
 
-- **Mac** com `python3` (testado com 3.14, só usa a biblioteca padrão), `ffmpeg`/`ffprobe` com libx264 (`brew install ffmpeg`) e `ssh`.
-- **Servidor Linux** com SSH e o disco de vídeos montado por UUID em `/srv/videos` (via `/etc/fstab`). Não precisa de rsync, FFmpeg nem nada além do SSH e de utilitários básicos (`findmnt`, `lsblk`, `sha256sum`, `stat`).
+- **Mac** com `python3` (testado com 3.14, só usa a biblioteca padrão) e `ffmpeg`/`ffprobe` com libx264 (`brew install ffmpeg`).
+- Não precisa de servidor, rede nem SSH no modo padrão.
 
-### 1. Configure
-
-Edite [`config/config.json`](config/config.json) — a seção `remote`:
-
-```json
-"remote": {
-  "ssh_user": "rick",
-  "local_host": "192.168.15.202",
-  "zerotier_host": "10.135.165.226",
-  "ssh_key": "~/.ssh/videopipeline_ed25519",
-  "remote_root": "/srv/videos",
-  "expected_filesystem": "exfat",
-  "expected_uuid": "6ACE-6E04"
-}
-```
-
-Descubra o UUID no servidor com `lsblk -f`. Com `expected_uuid` vazio, **nenhum envio é feito**.
-
-### 2. Chave SSH dedicada
+### Ativar
 
 ```bash
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/videopipeline_ed25519 -C videopipeline
-ssh-copy-id -i ~/.ssh/videopipeline_ed25519.pub rick@192.168.15.202   # pede a senha uma vez
+scripts/install.sh --load     # cria as pastas e ativa o LaunchAgent (roda ao carregar e a cada 15 min)
 ```
 
-O pipeline tenta `local_host` primeiro e cai para `zerotier_host` se a rede local não responder.
+### Usar
 
-### 3. Verifique
-
-```bash
-python3 scripts/video_pipeline.py status --remote
-# Servidor OK (192.168.15.202): /dev/sdb1 UUID=6ACE-6E04 exfat livre=238.7 GB
-```
-
-### 4. Ative
-
-```bash
-scripts/install.sh --load     # roda ao carregar e a cada 15 min
-```
-
-Pronto: copie vídeos para `my-videos/incoming/` e acompanhe com `tail -f my-videos/logs/pipeline.log`.
+1. Copie uma pasta de aula para `my-videos/incoming/`.
+2. Espere (acompanhe com `tail -f my-videos/logs/pipeline.log` ou `python3 scripts/video_pipeline.py status`). Para não esperar os 15 min: `python3 scripts/video_pipeline.py run`.
+3. Pegue o resultado em `my-videos/ready/` e arraste para o microSD.
+4. Depois de copiar, pode esvaziar `ready/` à vontade: o histórico evita reprocessar.
 
 ## Comandos
 
@@ -152,12 +123,14 @@ Exemplo de log:
 | `pipeline.home` | `my-videos` | onde ficam `incoming/`, `ready/`, `logs/`, `state/`… |
 | `pipeline.file_stability_seconds` | `180` | só processa arquivos sem modificação há esse tempo |
 | `pipeline.max_encode_attempts` | `3` | falhas de conversão antes de marcar `FAILED` |
-| `pipeline.archive_originals_after_upload` | `true` | move o original de `incoming/` para `originals/` (mesma estrutura de pastas) após o envio verificado; `false` o deixa em `incoming/` |
-| `pipeline.extensions` | mp4 mov mkv m4v webm | formatos aceitos |
+| `pipeline.mode` | `local` | `local`: tudo termina em `ready/` (envio manual). `upload`: envia ao HP Mini por SSH |
+| `pipeline.copy_non_video` | `true` | copia arquivos que não são vídeo para `ready/` (só no modo `local`) |
+| `pipeline.archive_originals_after_upload` | `true` | move cada original de `incoming/` para `originals/` (mesma estrutura) depois de pronto; `false` o deixa em `incoming/` |
+| `pipeline.extensions` | mp4 mov mkv m4v webm | extensões tratadas como **vídeo** (as demais são só copiadas) |
 | `encoding.default_profile` | `compact` | `quality` (CRF 18), `balanced` (20), `compact` (23) |
 | `encoding.minimum_savings_percent` | `15` | abaixo disso, envia o original sem recodificar |
 | `encoding.nice` | `10` | prioridade baixa do ffmpeg para não pesar o Mac |
-| `remote.min_free_gb` | `1` | folga mínima de espaço no destino |
+| `remote.*` | n/a | só no modo `upload` (host, usuário, chave, UUID do microSD...) |
 
 ### Qual perfil escolher?
 
@@ -174,24 +147,37 @@ Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Po
 
 ## Segurança dos dados
 
-- **Originais nunca são apagados nem sobrescritos.** Após o envio verificado (`archive_originals_after_upload`, ligado), são apenas **movidos** de `incoming/` para `originals/`, e só se o arquivo não mudou desde o processamento. Se já existir um com o mesmo nome, ganha o sufixo ` (1)`. O único arquivo removido é o derivado em `ready/`, regenerável.
-- **Sem `--delete`**, sem sincronização destrutiva, sem `chown`/`chmod` no cartão exFAT.
-- **Nunca usa o disco interno do servidor como alternativa.** Se o microSD não estiver montado, o arquivo fica local e espera.
-- Sem senhas em scripts, JSON ou logs: autenticação só por chave SSH dedicada. O SSH nunca é exposto à internet; o acesso remoto é via ZeroTier.
-- Nomes são ajustados para exFAT (`" * : < > ? \ |` viram `_`) e normalizados em Unicode.
+- **Originais nunca são apagados nem sobrescritos.** Depois de prontos, são apenas **movidos** de `incoming/` para `originals/`, e só se o arquivo não mudou desde o processamento. Nome repetido ganha o sufixo ` (1)`.
+- **`ready/` nunca sobrescreve:** arquivo idêntico é reaproveitado, diferente ganha ` (1)`.
+- **Cópias verificadas:** arquivos não-vídeo só aparecem em `ready/` depois de conferidos por SHA-256 (cópia via `processing/`, depois renomeada de forma atômica).
+- **Nomes compatíveis com exFAT:** `" * : < > ? \ |` viram `_` e o texto é normalizado em Unicode, para você arrastar para o microSD sem o Finder reclamar.
+- Arquivos ocultos (`.DS_Store`, `._algo`, pastas que começam com `.`) e temporários (`.part`, `.crdownload`, `.tmp`) são ignorados.
+- No modo `upload`: sem senhas em scripts, sem `--delete`, nunca usa o disco interno do servidor como alternativa.
+
+## Modo upload (opcional)
+
+Desligado por padrão. Para o pipeline enviar sozinho ao servidor, defina `"mode": "upload"` no config, preencha a seção `remote` e crie a chave SSH:
+
+```bash
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/videopipeline_ed25519 -C videopipeline
+ssh-copy-id -i ~/.ssh/videopipeline_ed25519.pub rick@192.168.15.202
+python3 scripts/video_pipeline.py status --remote   # confere servidor + microSD
+```
+
+Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/videos` é ponto de montagem do UUID esperado, exFAT, gravável, com espaço. O arquivo sobe para `.pipeline-tmp/`, é conferido por SHA-256 e publicado com `mv -n` (nunca sobrescreve; conflito vira `nome_<hash>.ext`). Só vídeos são enviados nesse modo.
 
 ## Estados de um vídeo
 
-`WAITING_STABLE` → `QUEUED` → `PROCESSING` → `UPLOAD_PENDING` → `UPLOADING` → **`COMPLETED`**
-(`FAILED` após falhas permanentes; `SUPERSEDED` se o arquivo mudou antes de processar). Falhas temporárias ficam no mesmo estado com `next_attempt` crescente. Reiniciou no meio? `PROCESSING` volta para a fila e `UPLOADING` para pendente.
+`WAITING_STABLE` → `QUEUED` → `PROCESSING` → **`COMPLETED`** (no modo `upload`: … → `UPLOAD_PENDING` → `UPLOADING` → `COMPLETED`)
+(`FAILED` após falhas permanentes; `SUPERSEDED` se o arquivo mudou antes de processar). Falhas temporárias ficam no mesmo estado com `next_attempt` crescente. Reiniciou no meio? `PROCESSING` volta para a fila (e o temporário é apagado).
 
 ## Solução de problemas
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
-| `status --remote` diz "HP Mini inacessível" | servidor desligado ou chave não autorizada | `scripts/healthcheck.sh`; refaça o `ssh-copy-id` |
-| "NÃO é ponto de montagem" | microSD desconectado ou não montado | reconecte/monte no servidor; o envio retoma sozinho |
-| "UUID … != esperado" | outro dispositivo em `/srv/videos` | confira `lsblk -f`; **não** altere `expected_uuid` sem certeza |
+| Arquivo não aparece em `ready/` | ainda na fila (vídeos longos demoram), ou ainda "estável" | `status`; veja `my-videos/logs/pipeline.log` |
+| *(modo upload)* "HP Mini inacessível" | servidor desligado ou chave não autorizada | `scripts/healthcheck.sh`; refaça o `ssh-copy-id` |
+| *(modo upload)* "NÃO é ponto de montagem" / "UUID … != esperado" | microSD ausente ou outro dispositivo | reconecte/monte no servidor; **não** altere `expected_uuid` sem certeza |
 | Vídeo parado em `WAITING_STABLE` | arquivo ainda sendo modificado | aguarde `file_stability_seconds` |
 | Job em `FAILED` | arquivo corrompido ou ffmpeg falhou | veja `my-videos/logs/errors.log`; depois `retry` |
 | Nada acontece | agente não carregado ou sessão encerrada | `scripts/healthcheck.sh`; `scripts/install.sh --load` |
@@ -199,7 +185,8 @@ Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Po
 ## Limitações
 
 - O **LaunchAgent roda na sessão do usuário**: com o Mac desligado ou sem login, nada processa; ao voltar, as pendências continuam.
-- Pastas vazias não são criadas no servidor, só as que contêm vídeos.
+- Pastas vazias não são recriadas em `ready/`, só as que contêm arquivos.
+- Uma pasta com um vídeo de horas bloqueia a fila: os arquivos pequenos só são copiados depois que ele terminar (um processamento por vez).
 - Legendas e streams extras não são copiados para o MP4 de saída (o log registra isso). Só o primeiro vídeo e o primeiro áudio.
 - O File Browser original está arquivado e não recebe correções de segurança: não o exponha diretamente à internet.
 
@@ -209,4 +196,4 @@ Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Po
 python3 -m unittest discover -s tests -v
 ```
 
-32 testes (~5 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
+40 testes (~5 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
