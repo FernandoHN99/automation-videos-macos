@@ -51,24 +51,24 @@ flowchart LR
 
 ```
 .
-├── scripts/
-│   ├── video_pipeline.py     # o pipeline inteiro (CLI)
-│   ├── install.sh            # cria pastas + LaunchAgent (--load ativa)
-│   ├── uninstall.sh          # remove só o agente (não apaga vídeos)
-│   └── healthcheck.sh        # diagnóstico completo
-├── config/config.json        # tudo que é configurável
-├── launchd/                  # template do LaunchAgent
-├── tests/                    # testes automatizados
-├── docs/TESTES.md            # registro dos testes reais e medições
-├── CLAUDE.md                 # contexto técnico do projeto
-└── my-videos/                # ← seus dados (ignorados pelo git)
-    ├── incoming/             #   coloque os vídeos aqui
-    ├── processing/           #   conversões/cópias em andamento (temporário)
-    ├── ready/                #   ✅ RESULTADO: arraste daqui para o microSD
-    ├── originals/            #   originais arquivados após o envio verificado
-    ├── failed/               #   reservado
-    ├── logs/                 #   pipeline.log, errors.log
-    └── state/                #   pipeline.sqlite3
+├── main.py                 # o pipeline inteiro (um único arquivo Python)
+├── README.md
+├── CLAUDE.md               # contexto técnico para o Claude Code
+├── support/                # tudo o que apoia o main.py
+│   ├── config.json         #   configuração (perfil, modo, servidor)
+│   ├── launchd.plist       #   modelo do agente do macOS
+│   ├── install.sh          #   cria pastas + agente (--load ativa)
+│   ├── uninstall.sh        #   remove só o agente (não apaga vídeos)
+│   ├── healthcheck.sh      #   diagnóstico completo
+│   └── tests/              #   testes automatizados
+└── my-videos/              # ← seus dados (ignorados pelo git)
+    ├── incoming/           #   coloque os vídeos/pastas aqui
+    ├── processing/         #   conversões e cópias em andamento (temporário)
+    ├── ready/              #   ✅ RESULTADO: arraste daqui para o microSD
+    ├── originals/          #   originais arquivados depois de prontos
+    ├── failed/             #   reservado
+    ├── logs/               #   pipeline.log, errors.log
+    └── state/              #   pipeline.sqlite3 (histórico: não apague)
 ```
 
 ## Começando
@@ -81,26 +81,26 @@ flowchart LR
 ### Ativar
 
 ```bash
-scripts/install.sh --load     # cria as pastas e ativa o LaunchAgent (roda ao carregar e a cada 15 min)
+support/install.sh --load     # cria as pastas e ativa o LaunchAgent (roda ao carregar e a cada 15 min)
 ```
 
 ### Usar
 
 1. Copie uma pasta de aula para `my-videos/incoming/`.
-2. Espere (acompanhe com `tail -f my-videos/logs/pipeline.log` ou `python3 scripts/video_pipeline.py status`). Para não esperar os 15 min: `python3 scripts/video_pipeline.py run`.
+2. Espere (acompanhe com `tail -f my-videos/logs/pipeline.log` ou `python3 main.py status`). Para não esperar os 15 min: `python3 main.py run`.
 3. Pegue o resultado em `my-videos/ready/` e arraste para o microSD.
 4. Depois de copiar, pode esvaziar `ready/` à vontade: o histórico evita reprocessar.
 
 ## Comandos
 
 ```bash
-python3 scripts/video_pipeline.py status [--remote]   # fila, pendências, economia, erros; --remote testa servidor+microSD
-python3 scripts/video_pipeline.py run                 # um ciclo manual completo
-python3 scripts/video_pipeline.py dry-run             # mostra o que faria, sem alterar nada
-python3 scripts/video_pipeline.py scan                # só detecta arquivos novos
-python3 scripts/video_pipeline.py retry               # recoloca falhas na fila e zera o backoff
-scripts/healthcheck.sh                                # diagnóstico: ferramentas, agente, chave, servidor, erros
-scripts/uninstall.sh                                  # desativa o agente (vídeos e histórico ficam)
+python3 main.py status [--remote]   # fila, pendências, economia, erros; --remote testa servidor+microSD
+python3 main.py run                 # um ciclo manual completo
+python3 main.py dry-run             # mostra o que faria, sem alterar nada
+python3 main.py scan                # só detecta arquivos novos
+python3 main.py retry               # recoloca falhas na fila e zera o backoff
+support/healthcheck.sh                                # diagnóstico: ferramentas, agente, chave, servidor, erros
+support/uninstall.sh                                  # desativa o agente (vídeos e histórico ficam)
 ```
 
 Exemplo de log:
@@ -143,7 +143,7 @@ Medido num screencast real de programação (VS Code + terminal, 1080p, 2 min):
 | `balanced` | 20 | 8,8 MB | 40% | 96,6 |
 | **`compact`** | **23** | **6,7 MB** | **54%** | **96,0** |
 
-Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Por isso existe a regra dos 15%: se não compensar, o original é enviado intacto. Detalhes em [docs/TESTES.md](docs/TESTES.md).
+Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Por isso existe a regra dos 15%: se não compensar, o original é enviado intacto. Registro das medições abaixo.
 
 ## Segurança dos dados
 
@@ -161,7 +161,7 @@ Desligado por padrão. Para o pipeline enviar sozinho ao servidor, defina `"mode
 ```bash
 ssh-keygen -t ed25519 -N "" -f ~/.ssh/videopipeline_ed25519 -C videopipeline
 ssh-copy-id -i ~/.ssh/videopipeline_ed25519.pub rick@192.168.15.202
-python3 scripts/video_pipeline.py status --remote   # confere servidor + microSD
+python3 main.py status --remote   # confere servidor + microSD
 ```
 
 Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/videos` é ponto de montagem do UUID esperado, exFAT, gravável, com espaço. O arquivo sobe para `.pipeline-tmp/`, é conferido por SHA-256 e publicado com `mv -n` (nunca sobrescreve; conflito vira `nome_<hash>.ext`). Só vídeos são enviados nesse modo.
@@ -176,11 +176,11 @@ Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/vid
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
 | Arquivo não aparece em `ready/` | ainda na fila (vídeos longos demoram), ou ainda "estável" | `status`; veja `my-videos/logs/pipeline.log` |
-| *(modo upload)* "HP Mini inacessível" | servidor desligado ou chave não autorizada | `scripts/healthcheck.sh`; refaça o `ssh-copy-id` |
+| *(modo upload)* "HP Mini inacessível" | servidor desligado ou chave não autorizada | `support/healthcheck.sh`; refaça o `ssh-copy-id` |
 | *(modo upload)* "NÃO é ponto de montagem" / "UUID … != esperado" | microSD ausente ou outro dispositivo | reconecte/monte no servidor; **não** altere `expected_uuid` sem certeza |
 | Vídeo parado em `WAITING_STABLE` | arquivo ainda sendo modificado | aguarde `file_stability_seconds` |
 | Job em `FAILED` | arquivo corrompido ou ffmpeg falhou | veja `my-videos/logs/errors.log`; depois `retry` |
-| Nada acontece | agente não carregado ou sessão encerrada | `scripts/healthcheck.sh`; `scripts/install.sh --load` |
+| Nada acontece | agente não carregado ou sessão encerrada | `support/healthcheck.sh`; `support/install.sh --load` |
 
 ## Limitações
 
@@ -193,7 +193,14 @@ Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/vid
 ## Testes
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s support/tests -v
 ```
 
 40 testes (~5 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
+
+## Registro de testes reais (2026-10-13)
+
+- **Screencast de programação** (VS Code + terminal, 1080p, trecho de 2 min, H.264 0,85 Mbps): tabela de perfis acima. Texto de código, terminal e árvore de arquivos legível no CRF 23 (conferido visualmente); perfil `compact` aprovado.
+- **Vídeo de pessoa falando** (1080p, H.264 5,2 Mbps): CRF 18 e 20 ficaram **maiores** que o original (+32% e +7%); só o CRF 23 economizou (−25%). É o motivo da regra dos 15%.
+- **Pipeline de ponta a ponta** (modo `upload`): clipe comprimido (14,0 → 6,4 MB), verificado e publicado no HP Mini; SHA-256 remoto igual ao local. Neste ensaio descobrimos que o servidor não tem `rsync`, por isso o envio usa `ssh cat` retomável.
+- **Aula completa** (modo `local`): pasta com 1 vídeo VP9 de 2h11 (1,2 GB) e ~230 arquivos de material. *(resultado final registrado no CLAUDE.md)*

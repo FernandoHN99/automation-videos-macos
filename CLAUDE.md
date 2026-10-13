@@ -57,7 +57,7 @@ Lições: fonte já H.264 em bitrate moderado → recomprimir com CRF ≤20 **au
 
 ## Arquitetura planejada
 
-Estrutura (agora em `my-videos/` dentro do projeto, não em `~/VideoPipeline`): `incoming/ processing/ ready/ originals/ failed/ logs/ state/pipeline.sqlite3 scripts/ config/config.json tests/ docs/ launchd/`. Código-fonte fica neste repositório de trabalho e é instalado/linkado em `~/VideoPipeline`.
+Estrutura (agora em `my-videos/` dentro do projeto, não em `~/VideoPipeline`): `incoming/ processing/ ready/ originals/ failed/ logs/ state/pipeline.sqlite3 scripts/ support/config.json tests/ docs/ launchd/`. Código-fonte fica neste repositório de trabalho e é instalado/linkado em `~/VideoPipeline`.
 
 - Estados: DISCOVERED, WAITING_STABLE, ANALYZING, QUEUED, PROCESSING, VALIDATING, READY, UPLOAD_PENDING, UPLOADING, VERIFYING_REMOTE, COMPLETED, RETRY_PENDING, FAILED. Só COMPLETED após validar o arquivo remoto.
 - Estabilidade de arquivo (tamanho+mtime) por 2–5 min antes de processar; extensões .mp4 .mov .mkv .m4v .webm; ignorar temporários.
@@ -70,8 +70,9 @@ Estrutura (agora em `my-videos/` dentro do projeto, não em `~/VideoPipeline`): 
 
 ## Código (tudo nesta pasta)
 
-- `scripts/video_pipeline.py` (pipeline, CLI), `config/config.json`, `launchd/*.plist` (template), `scripts/install.sh|uninstall.sh|healthcheck.sh`, `tests/test_pipeline.py` (32 testes, `python3 -m unittest discover -s tests`), `README.md` (raiz), `docs/TESTES.md`.
-- **Pastas de trabalho ficam em `my-videos/` (`my-videos/incoming|processing|ready|originals|failed|logs|state`)** (`pipeline.home = "my-videos"`, relativo à raiz do projeto; ignoradas pelo git), por pedido do usuário. O usuário coloca vídeos (com subpastas) em `incoming/`; a estrutura de pastas é replicada em `/srv/videos`. Pastas vazias não são criadas no servidor.
+- **Estrutura:** `main.py` (pipeline + CLI, raiz), `support/` (`config.json`, `launchd.plist` modelo, `install.sh`, `uninstall.sh`, `healthcheck.sh`, `tests/test_pipeline.py`), `README.md`, `CLAUDE.md`, `my-videos/` (dados, ignorado pelo git). Não existe mais `docs/`, `scripts/`, `config/`, `launchd/` nem `tests/` na raiz (reorganizado a pedido do usuário em 2026-10-13).
+- Testes: `python3 -m unittest discover -s support/tests` (40 testes).
+- **Pastas de trabalho em `my-videos/`** (`incoming|processing|ready|originals|failed|logs|state`; `pipeline.home = "my-videos"`, relativo à raiz). No modo padrão `local` o resultado fica em `my-videos/ready/` e o usuário envia manualmente; no modo `upload` a estrutura é replicada em `/srv/videos`.
 - Remote é uma classe (`SSHRemote`) trocável; testes usam `FakeRemote`.
 
 ## Progresso por fase (atualizado 2026-10-13)
@@ -95,7 +96,7 @@ Nota: o ping ICMP ao IP local falha mas o SSH funciona; não usar ping como test
 
 ## Git
 
-Repositório local (branch `main`), sem remote. `.gitignore` exclui `my-videos/*/*` (mantém `.gitkeep`), vídeos, `*.sqlite3`, logs e chaves. `config/config.json` É versionado (contém IPs da LAN/ZeroTier e UUID do microSD, nenhum segredo): não publicar em repositório público sem revisar.
+Repositório local (branch `main`), sem remote. `.gitignore` exclui `my-videos/*/*` (mantém `.gitkeep`), vídeos, `*.sqlite3`, logs e chaves. `support/config.json` É versionado (contém IPs da LAN/ZeroTier e UUID do microSD, nenhum segredo): não publicar em repositório público sem revisar.
 
 ## Decisões do usuário
 
@@ -107,6 +108,6 @@ Repositório local (branch `main`), sem remote. `.gitignore` exclui `my-videos/*
 - Originais (vídeo e não vídeo) vão de `incoming/` para `originals/` depois de prontos (`archive_originals_after_upload = true`).
 - Ocultos (`.DS_Store`, `._x`, pastas com `.`) e temporários são ignorados.
 - LaunchAgent `com.hpmini.videopipeline` está **carregado** (15 min, python3 estável do Homebrew).
-- 40 testes (`python3 -m unittest discover -s tests`).
+- 40 testes (`python3 -m unittest discover -s support/tests`).
 - Primeiro teste real em andamento: pasta `aula-01` (vídeo VP9 1080p 2h11, 1,2 GB + ~230 arquivos de material).
 - Servidor: apagados `.Spotlight-V100`, `.fseventsd`, `._video.mp4` com autorização; ficam `video.mp4`, `_pipeline-teste/`, `.pipeline-tmp/`.

@@ -23,7 +23,7 @@ import unicodedata
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent
 TEMP_SUFFIXES = (".part", ".crdownload", ".download", ".tmp", ".uploading", ".aria2", ".!qb")
 BAD_CHARS = re.compile(r'[\x00-\x1f"*:<>?\\|]')
 STAGING = ".pipeline-tmp"  # dentro de remote_root, mesmo filesystem do destino final
@@ -39,7 +39,7 @@ class Permanent(Exception):
 
 # --------------------------------------------------------------------- utilidades
 def load_config(path=None):
-    path = Path(path or os.environ.get("VIDEOPIPELINE_CONFIG") or ROOT / "config" / "config.json")
+    path = Path(path or os.environ.get("VIDEOPIPELINE_CONFIG") or ROOT / "support" / "config.json")
     with open(path) as f:
         return json.load(f)
 
