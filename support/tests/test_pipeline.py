@@ -5,7 +5,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 
@@ -52,7 +51,7 @@ class FakeRemote:
 
     def send(self, local, jid):
         if self.down:
-            raise vp.Transient("rsync falhou")
+            raise vp.Transient("envio falhou")
         self.sends += 1
         dst = self.root / vp.STAGING / f"{jid}.part"
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -79,11 +78,13 @@ class Base(unittest.TestCase):
         self.cfg["pipeline"]["home"] = str(self.tmp / "home")
         self.cfg["pipeline"]["file_stability_seconds"] = 0
         self.cfg["pipeline"]["mode"] = "upload"  # os testes antigos cobrem o envio por SSH (modo opcional)
+        self.cfg["encoding"]["default_profile"] = "balanced"  # perfil rápido só para os testes (o padrão real é compact)
         self.cfg["encoding"]["profiles"]["balanced"] = {"crf": 28, "preset": "ultrafast"}
         self.cfg["encoding"]["nice"] = 0
         self.remote = FakeRemote(self.tmp / "remote")
         self.p = vp.Pipeline(self.cfg, remote=self.remote)
-        self.p.log.handlers[:] = [h for h in self.p.log.handlers if not isinstance(h, vp.logging.StreamHandler) or hasattr(h, "baseFilename")]
+        # silencia o log no terminal durante os testes (mantém só os handlers de arquivo)
+        self.p.log.handlers[:] = [h for h in self.p.log.handlers if hasattr(h, "baseFilename")]
         self.inc = self.p.d["incoming"]
 
     def tearDown(self):
@@ -163,7 +164,8 @@ class TestHappyPath(Base):
         jobs = self.jobs()
         self.assertEqual(len(jobs), 2)
         self.assertEqual(jobs[1]["state"], "COMPLETED")
-        self.assertTrue((self.remote.root / ("a_" + jobs[1]["sha256"][:8] + ".mp4")).exists() or jobs[1]["remote_rel"] != "a.mp4")
+        self.assertEqual(jobs[1]["remote_rel"], f"a_{jobs[1]['sha256'][:8]}.mp4")  # versão nova não sobrescreve a antiga
+        self.assertTrue((self.remote.root / "a.mp4").exists() and (self.remote.root / jobs[1]["remote_rel"]).exists())
 
     def test_video_sem_audio(self):
         make_video(self.inc / "mudo.mp4", audio=False); self.run_cycle()
@@ -233,7 +235,7 @@ class TestRemoto(Base):
         self.assertTrue(Path(self.jobs()[0]["upload_path"]).exists())
         self.remote.down = False; self.run_cycle()
         self.assertEqual(self.state_of(), "COMPLETED")
-        self.assertEqual(self.jobs()[0]["encoding_time"] is not None, True)
+        self.assertIsNotNone(self.jobs()[0]["encoding_time"])
 
     def test_nao_reconverte_quando_so_o_envio_falhou(self):
         make_video(self.inc / "a.mp4"); self.remote.down = True; self.run_cycle()

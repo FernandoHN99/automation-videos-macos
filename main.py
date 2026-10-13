@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""VideoPipeline: comprime vídeos no Mac (FFmpeg) e envia ao HP Mini por rsync/SSH.
+"""VideoPipeline: comprime vídeos no Mac (FFmpeg) e entrega tudo pronto em my-videos/ready/.
 
-Fluxo: incoming/ -> (estável?) -> ffprobe -> ffmpeg -> validação -> upload atômico -> COMPLETED.
-Estados: WAITING_STABLE, QUEUED, PROCESSING, UPLOAD_PENDING, UPLOADING, COMPLETED, FAILED, SUPERSEDED.
+Modo "local" (padrão): incoming/ -> (estável?) -> vídeo: ffprobe -> ffmpeg -> validação; outros arquivos: cópia
+verificada -> ready/ (mesma estrutura de pastas) -> original arquivado em originals/. O envio ao microSD é manual.
+Modo "upload" (opcional): após a validação, envia ao HP Mini por SSH (verifica UUID/exFAT, SHA-256, publica atômico).
+
+Estados: WAITING_STABLE, QUEUED, PROCESSING, COMPLETED, FAILED, SUPERSEDED (+ UPLOAD_PENDING, UPLOADING no modo upload).
 Retentativas ficam em `next_attempt` (backoff exponencial) sem estado extra.
-Nunca apaga nem sobrescreve originais; nunca sobrescreve arquivo remoto; nunca usa --delete.
+Nunca apaga nem sobrescreve originais; nunca sobrescreve arquivo de destino; nunca usa --delete.
 """
 import argparse
 import fcntl
@@ -24,7 +27,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-TEMP_SUFFIXES = (".part", ".crdownload", ".download", ".tmp", ".uploading", ".aria2", ".!qb")
+TEMP_SUFFIXES = (".part", ".crdownload", ".download", ".tmp", ".aria2", ".!qb")
 BAD_CHARS = re.compile(r'[\x00-\x1f"*:<>?\\|]')
 STAGING = ".pipeline-tmp"  # dentro de remote_root, mesmo filesystem do destino final
 
@@ -221,6 +224,8 @@ echo "AVAIL=$(df -PB1 "$R" | awk 'NR==2{{print $4}}')"
 
 
 # --------------------------------------------------------------------- pipeline
+# upload_path / remote_rel: no modo upload são o arquivo local a enviar e o caminho remoto final;
+# no modo local guardam o arquivo e o caminho relativo em ready/ (nomes herdados do modo upload).
 SCHEMA = """CREATE TABLE IF NOT EXISTS jobs(
  id INTEGER PRIMARY KEY, src_rel TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
  state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
@@ -236,7 +241,7 @@ class Pipeline:
         p = cfg["pipeline"]
         home = Path(os.path.expanduser(p.get("home", "my-videos")))
         self.home = home if home.is_absolute() else (ROOT / home).resolve()  # relativo à pasta do projeto
-        self.d = {n: self.home / n for n in ("incoming", "processing", "ready", "originals", "failed", "logs", "state")}
+        self.d = {n: self.home / n for n in ("incoming", "processing", "ready", "originals", "logs", "state")}
         for d in self.d.values():
             d.mkdir(parents=True, exist_ok=True)
         self.log = self._logger()
@@ -256,6 +261,13 @@ class Pipeline:
     def is_video(self, rel):
         return Path(rel).suffix.lower() in self.exts
 
+    def eligible(self, p):
+        """Arquivo de incoming/ que o pipeline considera: não oculto (.DS_Store, ._x, pastas com ponto),
+        não temporário (.part, .crdownload...) e, fora do modo local, só vídeo."""
+        hidden = any(part.startswith(".") for part in p.relative_to(self.d["incoming"]).parts)
+        copy_other = self.local_mode and self.cfg["pipeline"].get("copy_non_video", True)
+        return p.is_file() and not hidden and not p.name.lower().endswith(TEMP_SUFFIXES) and (copy_other or self.is_video(p.name))
+
     def _logger(self):
         log = logging.getLogger(f"videopipeline.{self.home}")
         if log.handlers:
@@ -274,11 +286,9 @@ class Pipeline:
         self.db.execute(f"UPDATE jobs SET {', '.join(k + '=?' for k in f)} WHERE id=?", (*f.values(), job_id))
         self.db.commit()
 
-    def jobs(self, state, due=True):
-        q, a = "SELECT * FROM jobs WHERE state=?", [state]
-        if due:
-            q += " AND next_attempt<=?"; a.append(time.time())
-        return self.db.execute(q + " ORDER BY id", a).fetchall()
+    def jobs(self, state):
+        """Jobs no estado dado cuja próxima tentativa já venceu, na ordem de chegada."""
+        return self.db.execute("SELECT * FROM jobs WHERE state=? AND next_attempt<=? ORDER BY id", (state, time.time())).fetchall()
 
     def fail(self, job, exc, retry_state):
         """Permanent -> FAILED (após max_attempts); Transient -> volta para `retry_state` com backoff."""
@@ -304,11 +314,9 @@ class Pipeline:
     # -- descoberta
     def scan(self):
         stab = self.cfg["pipeline"].get("file_stability_seconds", 180)
-        copy_other = self.local_mode and self.cfg["pipeline"].get("copy_non_video", True)
         inc, now, new = self.d["incoming"], time.time(), 0
         for p in sorted(inc.rglob("*")):
-            hidden = any(part.startswith(".") for part in p.relative_to(inc).parts)  # .DS_Store, ._x, pastas ocultas
-            if not p.is_file() or hidden or p.name.lower().endswith(TEMP_SUFFIXES) or (not copy_other and not self.is_video(p.name)):
+            if not self.eligible(p):
                 continue
             rel, st = p.relative_to(inc).as_posix(), p.stat()
             row = self.db.execute("SELECT * FROM jobs WHERE src_rel=? AND size=? AND mtime_ns=?",
@@ -599,7 +607,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="VideoPipeline")
     ap.add_argument("--config")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for n, h in (("run", "ciclo completo: escanear, comprimir, enviar"), ("scan", "só descobrir arquivos novos"),
+    for n, h in (("run", "ciclo completo: escanear, comprimir/copiar para ready/ (ou enviar, no modo upload)"), ("scan", "só descobrir arquivos novos"),
                  ("retry", "recolocar falhas na fila"), ("dry-run", "mostrar o que seria feito, sem alterar nada")):
         sub.add_parser(n, help=h)
     s = sub.add_parser("status", help="estado geral"); s.add_argument("--remote", action="store_true", help="verificar servidor e microSD")
@@ -611,7 +619,7 @@ def main(argv=None):
     if args.cmd in ("run", "dry-run") and p.dry:
         p.scan()
         for f in sorted(p.d["incoming"].rglob("*")):
-            if f.is_file() and f.suffix.lower() in (".mp4", ".mov", ".mkv", ".m4v", ".webm"):
+            if p.eligible(f) and p.is_video(f.name):
                 try:
                     i = probe(f, p.ffprobe)
                     p.log.info("[dry-run] %s: %dx%d %s/%s %.0fs", f.name, i["width"], i["height"], i["vcodec"], i["acodec"], i["duration"])

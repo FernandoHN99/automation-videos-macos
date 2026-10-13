@@ -1,113 +1,57 @@
 # VideoPipeline — contexto do projeto
 
-Automação local no Mac: o usuário coloca vídeos em `~/VideoPipeline/incoming/`; o Mac comprime com FFmpeg (quando vale a pena), valida e envia por SSH/rsync ao HP Mini (Debian), que só armazena e serve via File Browser. **Nunca converter no HP Mini.**
+Automação local no Mac. O usuário coloca vídeos (e pastas inteiras de aula) em `my-videos/incoming/`; o script comprime os vídeos com FFmpeg, copia os demais arquivos iguais e deixa tudo em `my-videos/ready/`, com a mesma estrutura de pastas. **O usuário envia `ready/` ao microSD do HP Mini manualmente** (arrastando). Toda conversão acontece no Mac, nunca no HP Mini.
 
-Idioma de trabalho: português (Brasil).
+Idioma de trabalho: português (Brasil). Leia o [README.md](README.md) para uso e configuração.
 
-## Regras obrigatórias (do usuário)
+## Regras do usuário (valem sempre)
 
-- Não apagar, mover nem sobrescrever originais sem autorização explícita.
-- Não formatar dispositivos. Nunca tocar na formatação do microSD.
-- Não converter em massa antes de o usuário aprovar a qualidade visual.
-- Não alterar File Browser, ZeroTier ou Debian sem necessidade comprovada.
-- Sem Docker, VMs, IA residente ou dependências pesadas. Preferir Python 3, FFmpeg, rsync, SSH, launchd.
-- Nunca usar `rsync --delete`. Nunca sobrescrever vídeo existente no destino.
-- Não guardar senhas/chaves em scripts, JSON ou logs. Chave SSH dedicada, sem sobrescrever chaves existentes.
-- Não considerar o projeto pronto sem teste real de ponta a ponta.
-- Pedir aprovação antes de operações irreversíveis.
+- Não apagar, mover nem sobrescrever originais sem autorização. (Autorizado: após ficar pronto, o original é **movido** de `incoming/` para `originals/`; nunca apagado.)
+- Nunca formatar dispositivos nem tocar na formatação do microSD.
+- Não alterar File Browser, ZeroTier ou Debian sem necessidade comprovada. Não instalar nada no servidor (ele não tem rsync; por isso o modo upload usa `ssh cat`).
+- Sem Docker, VMs, IA residente ou dependências pesadas: só Python 3 (biblioteca padrão), FFmpeg, SSH, launchd.
+- Nunca usar `--delete`; nunca sobrescrever arquivo de destino.
+- Sem senhas ou chaves em scripts, JSON ou logs.
+- Pedir aprovação antes de operações irreversíveis (ex.: apagar arquivos do servidor).
 
-## Ambiente verificado (Mac, 2026-10-13)
+## Estado atual (2026-10-13)
 
-- macOS 26.6.2, Apple M1 (arm64), 8 núcleos, 16 GB RAM, 255 GB livres.
-- Python 3.14.8 (`/opt/homebrew/bin/python3`); FFmpeg/ffprobe 9.0.2 (`/opt/homebrew/bin`), com libx264, libvmaf, VideoToolbox.
-- `/usr/bin/rsync` é **openrsync (protocolo 29)**, não o rsync completo: verificar opções suportadas antes de usar.
-- OpenSSH 10.3; `launchctl` e `plutil` presentes. **Não existe `flock`**: usar `fcntl.flock` em Python.
-- `~/.ssh/config` só tem o Include do OrbStack. Não há host `hpmini` nem chave dedicada ainda.
-- Ping: ZeroTier (10.135.165.226) respondeu; IP local (192.168.15.202) não respondeu em 2026-10-13 (pode ser ICMP bloqueado, rede diferente ou servidor off). Reconfirmar por SSH.
+- **Modo padrão: `pipeline.mode = "local"`.** Vídeos → comprimidos (libx264, perfil `compact` = CRF 23, resolução e FPS originais; se economizar < 15% copia o original). Outros arquivos (PDF, imagem, zip...) → copiados iguais, SHA-256 conferido, datas preservadas. Nada vai por SSH.
+- **Modo `upload` (opcional, desligado):** envia vídeos ao HP Mini por `ssh cat` retomável, verificando UUID `6ACE-6E04`/exFAT/escrita/espaço antes de cada envio, SHA-256, `mv -n` atômico via `.pipeline-tmp/`. Testado de ponta a ponta com sucesso (clipe de 6,4 MB). Chave dedicada `~/.ssh/videopipeline_ed25519` já autorizada no servidor.
+- **LaunchAgent `com.hpmini.videopipeline` carregado**: roda ao carregar e a cada 15 min, `/opt/homebrew/bin/python3`, sem root, sem processo residente. Só funciona com a sessão do usuário ativa.
+- Perfil `compact` e `archive_originals_after_upload = true` aprovados pelo usuário.
+- Primeiro teste real em andamento: `incoming/aula-01` (1 vídeo VP9 1080p de 2h11, 1,2 GB + ~230 arquivos de material). Um processamento por vez; os arquivos pequenos só são copiados depois do vídeo grande.
+- Pendente: confirmar o resultado desse teste (`ready/`, `originals/`, `incoming/` vazio de arquivos processados); testar reboot do Mac; teste com o servidor desligado só se o modo upload for usado.
 
-## Servidor (informado pelo usuário em 2026-10-13, ainda NÃO verificado por mim)
+## Estrutura
 
-- HP Mini 210-4000, Atom N2600 32 bits, 2 GB RAM, Debian 12 i386. Hostname `hpmini`, usuário `rick`.
-- IP local `192.168.15.202`, ZeroTier `10.135.165.226` (rede HP-Mini-Videos). Nunca expor SSH na internet.
-- File Browser v2.63.23 em `/usr/local/bin/filebrowser`, porta 8080, raiz `/srv/videos`, banco `/var/lib/hpmini-media/filebrowser.db`. Projeto arquivado: não ampliar exposição.
-- microSD 256 GB: **exFAT, UUID `6ACE-6E04`, montado em `/srv/videos`, UID/GID 1000:1000**, automount via `/etc/fstab` testado após reboot. `filebrowser`, `zerotier-one`, `ssh` ativos após reboot.
-- exFAT: sem permissões POSIX; não usar chown/chmod no cartão; cuidar de caracteres inválidos e nomes longos.
+```
+main.py                      pipeline + CLI (arquivo único)
+support/config/config.json   configuração
+support/launchd/             modelo do plist
+support/scripts/             install.sh (--load ativa), uninstall.sh, healthcheck.sh
+support/tests/               40 testes: python3 -m unittest discover -s support/tests
+my-videos/                   dados, ignorados pelo git (.gitkeep mantém a estrutura)
+  incoming/ processing/ ready/ originals/ logs/ state/
+```
 
-### Verificação obrigatória antes de CADA envio (`verify_remote_storage`)
+- Estado e histórico: `my-videos/state/pipeline.sqlite3` (não apagar: evita reprocessar).
+- Estados dos jobs: WAITING_STABLE, QUEUED, PROCESSING, COMPLETED, FAILED, SUPERSEDED (+ UPLOAD_PENDING, UPLOADING no modo upload). Retentativas por `next_attempt` com backoff 5 min → 6 h.
+- Colunas `upload_path`/`remote_rel` do SQLite guardam, no modo local, o caminho do arquivo em `ready/` (nomes herdados do modo upload).
+- Nomes de saída são ajustados para exFAT (`" * : < > ? \ |` viram `_`, Unicode NFC).
+- Lock com `fcntl.flock` em `my-videos/state/pipeline.lock` (macOS não tem `flock`).
+- `SSHRemote` é uma classe trocável; os testes usam um `FakeRemote`.
 
-1. SSH acessível (timeout).
-2. `/srv/videos` é ponto de montagem real (`findmnt`).
-3. Dispositivo montado tem UUID `6ACE-6E04` (nunca confiar em `/dev/sdb2`).
-4. Filesystem é exfat.
-5. Escrita permitida e espaço livre suficiente.
-6. Caminho final não resolve para diretório inesperado.
-Qualquer falha → abortar, manter arquivo local, reagendar. **Nunca usar o HD interno como fallback.**
+## Ambiente (verificado)
 
-## Resultado do protótipo FFmpeg (2026-10-13)
+- Mac: macOS 26.6.2, Apple M1, 16 GB. Python 3.14, FFmpeg 9.0.2 (libx264, libvmaf, VideoToolbox). `/usr/bin/rsync` é openrsync (não usado).
+- Servidor: HP Mini 210-4000, Debian 12 i386, usuário `rick`, IP local `192.168.15.202`, ZeroTier `10.135.165.226`. File Browser em `:8080` com raiz `/srv/videos` (microSD exFAT, UUID `6ACE-6E04`, automount via fstab). O ping ICMP ao IP local falha mas o SSH funciona.
+- Servidor hoje: `video.mp4` e `_pipeline-teste/` (arquivos de teste do usuário/nossos) e a pasta oculta `.pipeline-tmp/` (área temporária do modo upload, vazia, só recriada se o modo upload for usado; pode ser apagada).
 
-Vídeo: `~/Downloads/video.mp4` — 1080p30, H.264 5,2 Mbps, AAC, 94 s, 64,4 MB. **É uma pessoa falando, sem código: não serve para escolher o perfil.**
+## Medições de qualidade
 
-| Versão | Tamanho | vs. original | Tempo | VMAF |
-|---|---|---|---|---|
-| CRF 18 | 85,1 MB | +32% | 59 s | 96,8 |
-| CRF 20 | 68,9 MB | +7% | 60 s | 96,0 |
-| CRF 23 | 48,2 MB | −25% | 56 s | 94,2 |
-
-Lições: fonte já H.264 em bitrate moderado → recomprimir com CRF ≤20 **aumenta** o arquivo. A regra `minimum_savings_percent = 15` (manter original se economizar menos) é essencial. Velocidade ≈ 1,6× tempo real no M1 (libx264, preset medium). Comando de referência usa `-map 0:v:0 -map '0:a:0?'` (aspas por causa do zsh).
-
-## Arquitetura planejada
-
-Estrutura final: ver seção "Código" abaixo (`main.py` na raiz, `support/`, `my-videos/`). O plano original previa `scripts/ config/ tests/ docs/ launchd/` e `~/VideoPipeline`, já substituídos.
-
-- Estados: DISCOVERED, WAITING_STABLE, ANALYZING, QUEUED, PROCESSING, VALIDATING, READY, UPLOAD_PENDING, UPLOADING, VERIFYING_REMOTE, COMPLETED, RETRY_PENDING, FAILED. Só COMPLETED após validar o arquivo remoto.
-- Estabilidade de arquivo (tamanho+mtime) por 2–5 min antes de processar; extensões .mp4 .mov .mkv .m4v .webm; ignorar temporários.
-- Perfis: quality (CRF18), balanced (CRF20, padrão), compact (CRF23), preset medium, libx264, yuv420p, AAC 128k, faststart, sem reduzir resolução/FPS. Decisão (converter / manter original / enviar direto) e streams registrados no SQLite.
-- Upload: `ssh cat` retomável (sem rsync no servidor) para `nome.uploading` → verificar tamanho/SHA-256 → renomear no servidor → registrar. Preservar subpastas de `incoming/`. Nome existente e idêntico = já enviado; diferente = nome único ou parar.
-- Concorrência: `fcntl.flock` em Python; um encode por vez. Retentativas com backoff.
-- launchd: LaunchAgent `~/Library/LaunchAgents/com.hpmini.videopipeline.plist`, intervalo 900 s, sem root, sem processo residente. Funciona só com sessão do usuário ativa (documentar).
-- CLI: `status`, `scan`, `run`, `retry`, `dry-run`. Logs com rotação, sem segredos.
-- Host SSH: preferir IP local, cair para ZeroTier; chave dedicada + entrada em `~/.ssh/config`.
-
-## Código (tudo nesta pasta)
-
-- **Estrutura:** `main.py` (pipeline + CLI, raiz), `support/` (`config/config.json`, `launchd/com.hpmini.videopipeline.plist` modelo, `scripts/install.sh|uninstall.sh|healthcheck.sh`, `tests/test_pipeline.py`), `README.md`, `CLAUDE.md`, `my-videos/` (dados, ignorado pelo git). Não existe mais `docs/`, `scripts/`, `config/`, `launchd/` nem `tests/` na raiz (reorganizado a pedido do usuário em 2026-10-13).
-- Testes: `python3 -m unittest discover -s support/tests` (40 testes).
-- **Pastas de trabalho em `my-videos/`** (`incoming|processing|ready|originals|failed|logs|state`; `pipeline.home = "my-videos"`, relativo à raiz). No modo padrão `local` o resultado fica em `my-videos/ready/` e o usuário envia manualmente; no modo `upload` a estrutura é replicada em `/srv/videos`.
-- Remote é uma classe (`SSHRemote`) trocável; testes usam `FakeRemote`.
-
-## Progresso por fase (atualizado 2026-10-13)
-
-| Fase | Estado |
-|---|---|
-| 1 Inspeção | Feita |
-| 2 Protótipo FFmpeg | Feita com vídeo de código: CRF 23 → −54% VMAF 96,0; perfil compact aprovado (APROVADO pelo usuário em 2026-10-13: compact/CRF 23, já no config) |
-| 3 Pipeline local | Feita e testada (28 testes + execução real com ffmpeg) |
-| 4 SSH | **Feita**: chave `~/.ssh/videopipeline_ed25519` autorizada; `status --remote` OK (UUID 6ACE-6E04, exfat, 238 GB livres) |
-| 5 Upload real | **Testado com sucesso** em 2026-10-13: clipe 6,4 MB em `/srv/videos/_pipeline-teste/`, SHA-256 remoto = local. **O HP Mini não tem rsync**: envio é `ssh cat` retomável (nada instalado no servidor) |
-| 6 LaunchAgent | Plist/instalador prontos; **NÃO carregado** |
-| 7 Teste ponta a ponta | Não feito |
-
-Nota: o ping ICMP ao IP local falha mas o SSH funciona; não usar ping como teste. Uma conexão `accept-new` adicionou 10.135.165.226 ao `~/.ssh/known_hosts`.
-
-## Pendências
-
-- Usuário: conferir `_pipeline-teste/` no File Browser (Mac e celular/ZeroTier) e apagar a pasta de teste se quiser. Existe também `/srv/videos/.pipeline-tmp/` (staging, oculta, deve ficar vazia).
-- `install.sh --load` só com autorização do usuário, depois do teste real de upload; então testar reboot e HP Mini offline.
+Screencast de programação (1080p, trecho de 2 min): CRF 18 → −30%, CRF 20 → −40%, CRF 23 → −54% (VMAF 96,9 / 96,6 / 96,0); texto legível no CRF 23. Vídeo de pessoa falando (5,2 Mbps): CRF 18/20 ficaram **maiores** que o original; por isso a regra dos 15%. Detalhes no README.
 
 ## Git
 
-Repositório local (branch `main`), sem remote. `.gitignore` exclui `my-videos/*/*` (mantém `.gitkeep`), vídeos, `*.sqlite3`, logs e chaves. `support/config/config.json` É versionado (contém IPs da LAN/ZeroTier e UUID do microSD, nenhum segredo): não publicar em repositório público sem revisar.
-
-## Decisões do usuário
-
-- 2026-10-13: perfil `compact` (CRF 23) aprovado. `archive_originals_after_upload = true` (original é movido, nunca apagado, de `incoming/` para `originals/` após envio verificado).
-
-## Mudança de fluxo (2026-10-13, pedido do usuário)
-
-**Modo padrão agora é `pipeline.mode = "local"`**: o script só comprime vídeos e joga em `my-videos/ready/`; arquivos que não são vídeo são copiados IGUAIS (SHA-256, datas preservadas) para `ready/`, mesma estrutura de pastas. **O usuário faz o upload manualmente**, arrastando `ready/` para o microSD. Nada é enviado por SSH. O envio SSH (verify_storage, UUID 6ACE-6E04, `.pipeline-tmp`, SHA-256, `mv -n`) continua no código e testado, atrás de `"mode": "upload"`.
-- Originais (vídeo e não vídeo) vão de `incoming/` para `originals/` depois de prontos (`archive_originals_after_upload = true`).
-- Ocultos (`.DS_Store`, `._x`, pastas com `.`) e temporários são ignorados.
-- LaunchAgent `com.hpmini.videopipeline` está **carregado** (15 min, python3 estável do Homebrew).
-- 40 testes (`python3 -m unittest discover -s support/tests`).
-- Primeiro teste real em andamento: pasta `aula-01` (vídeo VP9 1080p 2h11, 1,2 GB + ~230 arquivos de material).
-- Servidor: apagados `.Spotlight-V100`, `.fseventsd`, `._video.mp4` com autorização; ficam `video.mp4`, `_pipeline-teste/`, `.pipeline-tmp/`.
+Repositório local, branch `main`, sem remote. `support/config/config.json` é versionado (IPs da LAN/ZeroTier e UUID do microSD, nenhum segredo): revisar antes de publicar.

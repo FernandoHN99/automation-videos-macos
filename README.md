@@ -69,7 +69,6 @@ flowchart LR
     ├── processing/         #   conversões e cópias em andamento (temporário)
     ├── ready/              #   ✅ RESULTADO: arraste daqui para o microSD
     ├── originals/          #   originais arquivados depois de prontos
-    ├── failed/             #   reservado
     ├── logs/               #   pipeline.log, errors.log
     └── state/              #   pipeline.sqlite3 (histórico: não apague)
 ```
@@ -97,26 +96,25 @@ support/scripts/install.sh --load     # cria as pastas e ativa o LaunchAgent (ro
 ## Comandos
 
 ```bash
-python3 main.py status [--remote]   # fila, pendências, economia, erros; --remote testa servidor+microSD
-python3 main.py run                 # um ciclo manual completo
-python3 main.py dry-run             # mostra o que faria, sem alterar nada
-python3 main.py scan                # só detecta arquivos novos
-python3 main.py retry               # recoloca falhas na fila e zera o backoff
-support/scripts/healthcheck.sh                                # diagnóstico: ferramentas, agente, chave, servidor, erros
-support/scripts/uninstall.sh                                  # desativa o agente (vídeos e histórico ficam)
+python3 main.py status [--remote]      # fila, economia, erros; --remote testa servidor+microSD (modo upload)
+python3 main.py run                    # um ciclo manual completo
+python3 main.py dry-run                # mostra o que faria, sem alterar nada
+python3 main.py scan                   # só detecta arquivos novos
+python3 main.py retry                  # recoloca falhas na fila e zera o backoff
+support/scripts/healthcheck.sh         # diagnóstico: ferramentas, agente, estado, erros
+support/scripts/uninstall.sh           # desativa o agente (vídeos e histórico ficam)
 ```
 
 Exemplo de log:
 
 ```
 [INFO] Novo arquivo: GraphQL/Aula 05.mp4 (14.0 MB)
+[INFO] enfileirado estável: GraphQL/Aula 05.mp4
 [INFO] Input: 14.0 MB | 1920x1080@30.0 | h264/aac | 0.98 Mbps | 120s
 [INFO] Profile: compact (crf 23, medium). Encoding started
 [INFO] Encoding completed em 12s. Output: 6.4 MB. Savings: 54.3%. Validation passed
-[INFO] HP Mini acessível; microSD verificado (UUID 6ACE-6E04)
-[INFO] Upload started: GraphQL/Aula 05.mp4
-[INFO] Remote checksum verified
-[INFO] Published: GraphQL/Aula 05.mp4. Job completed
+[INFO] Pronto em ready/GraphQL/Aula 05.mp4 [encoded]. Job completed
+[INFO] Original arquivado: originals/GraphQL/Aula 05.mp4
 ```
 
 ## Configuração
@@ -131,7 +129,7 @@ Exemplo de log:
 | `pipeline.archive_originals_after_upload` | `true` | move cada original de `incoming/` para `originals/` (mesma estrutura) depois de pronto; `false` o deixa em `incoming/` |
 | `pipeline.extensions` | mp4 mov mkv m4v webm | extensões tratadas como **vídeo** (as demais são só copiadas) |
 | `encoding.default_profile` | `compact` | `quality` (CRF 18), `balanced` (20), `compact` (23) |
-| `encoding.minimum_savings_percent` | `15` | abaixo disso, envia o original sem recodificar |
+| `encoding.minimum_savings_percent` | `15` | abaixo disso, mantém o original (copia sem recodificar) |
 | `encoding.nice` | `10` | prioridade baixa do ffmpeg para não pesar o Mac |
 | `remote.*` | n/a | só no modo `upload` (host, usuário, chave, UUID do microSD...) |
 
@@ -146,7 +144,7 @@ Medido num screencast real de programação (VS Code + terminal, 1080p, 2 min):
 | `balanced` | 20 | 8,8 MB | 40% | 96,6 |
 | **`compact`** | **23** | **6,7 MB** | **54%** | **96,0** |
 
-Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Por isso existe a regra dos 15%: se não compensar, o original é enviado intacto. Registro das medições abaixo.
+Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Por isso existe a regra dos 15%: se não compensar, o original é mantido intacto. Registro das medições abaixo.
 
 ## Segurança dos dados
 
@@ -199,11 +197,10 @@ Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/vid
 python3 -m unittest discover -s support/tests -v
 ```
 
-40 testes (~5 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
+40 testes (~10 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
 
 ## Registro de testes reais (2026-10-13)
 
 - **Screencast de programação** (VS Code + terminal, 1080p, trecho de 2 min, H.264 0,85 Mbps): tabela de perfis acima. Texto de código, terminal e árvore de arquivos legível no CRF 23 (conferido visualmente); perfil `compact` aprovado.
 - **Vídeo de pessoa falando** (1080p, H.264 5,2 Mbps): CRF 18 e 20 ficaram **maiores** que o original (+32% e +7%); só o CRF 23 economizou (−25%). É o motivo da regra dos 15%.
-- **Pipeline de ponta a ponta** (modo `upload`): clipe comprimido (14,0 → 6,4 MB), verificado e publicado no HP Mini; SHA-256 remoto igual ao local. Neste ensaio descobrimos que o servidor não tem `rsync`, por isso o envio usa `ssh cat` retomável.
-- **Aula completa** (modo `local`): pasta com 1 vídeo VP9 de 2h11 (1,2 GB) e ~230 arquivos de material. *(resultado final registrado no CLAUDE.md)*
+- **Pipeline de ponta a ponta** (modo `upload`, antes de o modo `local` virar o padrão): clipe comprimido (14,0 → 6,4 MB), verificado e publicado no HP Mini; SHA-256 remoto igual ao local. Neste ensaio descobrimos que o servidor não tem `rsync`, por isso o envio usa `ssh cat` retomável.
