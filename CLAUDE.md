@@ -21,7 +21,7 @@ Idioma de trabalho: português (Brasil). Leia o [README.md](README.md) para uso 
 - **Execução manual, sem agendamento (decisão do usuário, 2026-10-13):** o LaunchAgent foi removido. `python3 main.py start` roda em segundo plano (nova sessão, sobrevive ao Terminal); `run` em primeiro plano; `stop` encerra (mata o grupo de processos, inclusive o ffmpeg); `status` mostra o PID. Enquanto há trabalho, o `caffeinate -i -m -s -w <pid>` bloqueia a suspensão (verificado com `pmset -g assertions`); fechar a tampa do MacBook sem monitor externo suspende mesmo assim. O `run` espera arquivos recém-copiados ficarem estáveis (`wait_for_stable`, `poll_seconds`) e só termina quando não resta nada. O PID fica em `my-videos/state/pipeline.lock`.
 - Perfil `compact` e `archive_originals_after_upload = true` aprovados pelo usuário. Fluxo: validado/copiado → original vai de `incoming/` para `originals/`; `ready/` fica com os vídeos finais e os arquivos copiados; pastas vazias de `incoming/` são removidas (só as sem alteração há `file_stability_seconds`).
 - **Teste real concluído (2026-10-13):** `incoming/aula-01` (vídeo VP9 1080p de 2h11, 1,2 GB → 828 MB H.264, −30,7%, 27 min; 236 materiais idênticos por SHA-256 e datas preservadas). `incoming/` ficou limpo.
-- Pendente: o usuário arrastar `ready/` para o microSD; testar reboot do Mac.
+- Pendente (do usuário): arrastar `ready/` para o microSD e conferir a qualidade da aula de 2h antes de apagar `originals/`.
 
 ## Estrutura
 
@@ -46,7 +46,7 @@ my-videos/                   dados, ignorados pelo git (.gitkeep mantém a estru
 
 - Mac: macOS 26.6.2, Apple M1, 16 GB. Python 3.14, FFmpeg 9.0.2 (libx264, libvmaf, VideoToolbox). `/usr/bin/rsync` é openrsync (não usado).
 - Servidor: HP Mini 210-4000, Debian 12 i386, usuário `rick`, IP local `192.168.15.202`, ZeroTier `10.135.165.226`. File Browser em `:8080` com raiz `/srv/videos` (microSD exFAT, UUID `6ACE-6E04`, automount via fstab). O ping ICMP ao IP local falha mas o SSH funciona.
-- Servidor hoje: `video.mp4` e `_pipeline-teste/` (arquivos de teste do usuário/nossos) e a pasta oculta `.pipeline-tmp/` (área temporária do modo upload, vazia, só recriada se o modo upload for usado; pode ser apagada).
+- Servidor (última checagem 2026-10-13): `_pipeline-teste/` (vídeo do nosso teste) e a pasta oculta `.pipeline-tmp/` (área temporária do modo upload, vazia, só recriada se esse modo for usado; o usuário pode apagar ambas). O `video.mp4` antigo não está mais lá (não fomos nós).
 
 ## Medições de qualidade
 

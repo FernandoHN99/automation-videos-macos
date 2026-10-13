@@ -90,7 +90,7 @@ flowchart LR
 
 Prefere ver o andamento na tela? Use `python3 main.py run` (primeiro plano; `Ctrl+C` interrompe). Se copiar novos arquivos **durante** a execução, ela os espera ficarem estáveis (3 min) e os processa também; ela só termina quando não resta nada.
 
-> **Dica:** para uma primeira leva grande, rode `start`, deixe o Mac na tomada e feche a tampa **só se** ele estiver ligado a um monitor externo (veja Limitações).
+> **Dica:** numa primeira leva grande, rode `start`, deixe o Mac **na tomada com a tampa aberta** (a tela pode apagar). Fechar a tampa suspende o Mac, a menos que haja um monitor externo (veja Limitações).
 
 ## Comandos
 
@@ -128,6 +128,9 @@ Exemplo de log:
 | `pipeline.copy_non_video` | `true` | copia arquivos que não são vídeo para `ready/` (só no modo `local`) |
 | `pipeline.archive_originals_after_upload` | `true` | move cada original de `incoming/` para `originals/` (mesma estrutura) depois de pronto; `false` o deixa em `incoming/` |
 | `pipeline.extensions` | mp4 mov mkv m4v webm | extensões tratadas como **vídeo** (as demais são só copiadas) |
+| `pipeline.prevent_sleep` | `true` | impede o Mac de suspender enquanto há trabalho (`caffeinate`) |
+| `pipeline.wait_for_stable` | `true` | a execução espera arquivos recém-copiados ficarem estáveis e só termina sem pendências |
+| `pipeline.poll_seconds` | `15` | de quanto em quanto tempo checa se os arquivos já estabilizaram |
 | `encoding.default_profile` | `compact` | `quality` (CRF 18), `balanced` (20), `compact` (23) |
 | `encoding.minimum_savings_percent` | `15` | abaixo disso, mantém o original (copia sem recodificar) |
 | `encoding.nice` | `10` | prioridade baixa do ffmpeg para não pesar o Mac |

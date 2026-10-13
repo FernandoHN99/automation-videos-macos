@@ -594,7 +594,9 @@ class Pipeline:
         if pid <= 0:
             print("Execução detectada, mas sem PID registrado; feche o Terminal onde ela roda.")
             return 1
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        pgid = os.getpgid(pid)
+        # o `start` roda em sessão própria (grupo = PID), então o grupo inclui o ffmpeg; nunca derrubamos o nosso próprio grupo
+        os.killpg(pgid, signal.SIGTERM) if pgid != os.getpgrp() else os.kill(pid, signal.SIGTERM)
         print(f"Execução encerrada (PID {pid}). Os arquivos em andamento continuam em incoming/ e voltam à fila na próxima vez.")
         return 0
 
