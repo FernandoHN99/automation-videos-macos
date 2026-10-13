@@ -55,11 +55,14 @@ flowchart LR
 ├── README.md
 ├── CLAUDE.md               # contexto técnico para o Claude Code
 ├── support/                # tudo o que apoia o main.py
-│   ├── config.json         #   configuração (perfil, modo, servidor)
-│   ├── launchd.plist       #   modelo do agente do macOS
-│   ├── install.sh          #   cria pastas + agente (--load ativa)
-│   ├── uninstall.sh        #   remove só o agente (não apaga vídeos)
-│   ├── healthcheck.sh      #   diagnóstico completo
+│   ├── config/
+│   │   └── config.json     #   configuração (perfil, modo, servidor)
+│   ├── launchd/
+│   │   └── com.hpmini.videopipeline.plist   # modelo do agente do macOS
+│   ├── scripts/
+│   │   ├── install.sh      #   cria pastas + agente (--load ativa)
+│   │   ├── uninstall.sh    #   remove só o agente (não apaga vídeos)
+│   │   └── healthcheck.sh  #   diagnóstico completo
 │   └── tests/              #   testes automatizados
 └── my-videos/              # ← seus dados (ignorados pelo git)
     ├── incoming/           #   coloque os vídeos/pastas aqui
@@ -81,7 +84,7 @@ flowchart LR
 ### Ativar
 
 ```bash
-support/install.sh --load     # cria as pastas e ativa o LaunchAgent (roda ao carregar e a cada 15 min)
+support/scripts/install.sh --load     # cria as pastas e ativa o LaunchAgent (roda ao carregar e a cada 15 min)
 ```
 
 ### Usar
@@ -99,8 +102,8 @@ python3 main.py run                 # um ciclo manual completo
 python3 main.py dry-run             # mostra o que faria, sem alterar nada
 python3 main.py scan                # só detecta arquivos novos
 python3 main.py retry               # recoloca falhas na fila e zera o backoff
-support/healthcheck.sh                                # diagnóstico: ferramentas, agente, chave, servidor, erros
-support/uninstall.sh                                  # desativa o agente (vídeos e histórico ficam)
+support/scripts/healthcheck.sh                                # diagnóstico: ferramentas, agente, chave, servidor, erros
+support/scripts/uninstall.sh                                  # desativa o agente (vídeos e histórico ficam)
 ```
 
 Exemplo de log:
@@ -176,11 +179,11 @@ Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/vid
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
 | Arquivo não aparece em `ready/` | ainda na fila (vídeos longos demoram), ou ainda "estável" | `status`; veja `my-videos/logs/pipeline.log` |
-| *(modo upload)* "HP Mini inacessível" | servidor desligado ou chave não autorizada | `support/healthcheck.sh`; refaça o `ssh-copy-id` |
+| *(modo upload)* "HP Mini inacessível" | servidor desligado ou chave não autorizada | `support/scripts/healthcheck.sh`; refaça o `ssh-copy-id` |
 | *(modo upload)* "NÃO é ponto de montagem" / "UUID … != esperado" | microSD ausente ou outro dispositivo | reconecte/monte no servidor; **não** altere `expected_uuid` sem certeza |
 | Vídeo parado em `WAITING_STABLE` | arquivo ainda sendo modificado | aguarde `file_stability_seconds` |
 | Job em `FAILED` | arquivo corrompido ou ffmpeg falhou | veja `my-videos/logs/errors.log`; depois `retry` |
-| Nada acontece | agente não carregado ou sessão encerrada | `support/healthcheck.sh`; `support/install.sh --load` |
+| Nada acontece | agente não carregado ou sessão encerrada | `support/scripts/healthcheck.sh`; `support/scripts/install.sh --load` |
 
 ## Limitações
 

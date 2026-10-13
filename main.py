@@ -39,7 +39,7 @@ class Permanent(Exception):
 
 # --------------------------------------------------------------------- utilidades
 def load_config(path=None):
-    path = Path(path or os.environ.get("VIDEOPIPELINE_CONFIG") or ROOT / "support" / "config.json")
+    path = Path(path or os.environ.get("VIDEOPIPELINE_CONFIG") or ROOT / "support" / "config" / "config.json")
     with open(path) as f:
         return json.load(f)
 

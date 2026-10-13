@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 import main as vp  # noqa: E402
 
-BASE_CFG = json.loads((ROOT / "support" / "config.json").read_text())
+BASE_CFG = json.loads((ROOT / "support" / "config" / "config.json").read_text())
 
 
 def make_video(path, crf=12, audio=True, seconds=2, size="320x240"):

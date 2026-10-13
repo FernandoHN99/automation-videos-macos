@@ -70,7 +70,7 @@ Estrutura final: ver seção "Código" abaixo (`main.py` na raiz, `support/`, `m
 
 ## Código (tudo nesta pasta)
 
-- **Estrutura:** `main.py` (pipeline + CLI, raiz), `support/` (`config.json`, `launchd.plist` modelo, `install.sh`, `uninstall.sh`, `healthcheck.sh`, `tests/test_pipeline.py`), `README.md`, `CLAUDE.md`, `my-videos/` (dados, ignorado pelo git). Não existe mais `docs/`, `scripts/`, `config/`, `launchd/` nem `tests/` na raiz (reorganizado a pedido do usuário em 2026-10-13).
+- **Estrutura:** `main.py` (pipeline + CLI, raiz), `support/` (`config/config.json`, `launchd/com.hpmini.videopipeline.plist` modelo, `scripts/install.sh|uninstall.sh|healthcheck.sh`, `tests/test_pipeline.py`), `README.md`, `CLAUDE.md`, `my-videos/` (dados, ignorado pelo git). Não existe mais `docs/`, `scripts/`, `config/`, `launchd/` nem `tests/` na raiz (reorganizado a pedido do usuário em 2026-10-13).
 - Testes: `python3 -m unittest discover -s support/tests` (40 testes).
 - **Pastas de trabalho em `my-videos/`** (`incoming|processing|ready|originals|failed|logs|state`; `pipeline.home = "my-videos"`, relativo à raiz). No modo padrão `local` o resultado fica em `my-videos/ready/` e o usuário envia manualmente; no modo `upload` a estrutura é replicada em `/srv/videos`.
 - Remote é uma classe (`SSHRemote`) trocável; testes usam `FakeRemote`.
@@ -96,7 +96,7 @@ Nota: o ping ICMP ao IP local falha mas o SSH funciona; não usar ping como test
 
 ## Git
 
-Repositório local (branch `main`), sem remote. `.gitignore` exclui `my-videos/*/*` (mantém `.gitkeep`), vídeos, `*.sqlite3`, logs e chaves. `support/config.json` É versionado (contém IPs da LAN/ZeroTier e UUID do microSD, nenhum segredo): não publicar em repositório público sem revisar.
+Repositório local (branch `main`), sem remote. `.gitignore` exclui `my-videos/*/*` (mantém `.gitkeep`), vídeos, `*.sqlite3`, logs e chaves. `support/config/config.json` É versionado (contém IPs da LAN/ZeroTier e UUID do microSD, nenhum segredo): não publicar em repositório público sem revisar.
 
 ## Decisões do usuário
 
