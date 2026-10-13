@@ -70,7 +70,7 @@ Estrutura (agora em `my-videos/` dentro do projeto, não em `~/VideoPipeline`): 
 
 ## Código (tudo nesta pasta)
 
-- `scripts/video_pipeline.py` (pipeline, CLI), `config/config.json`, `launchd/*.plist` (template), `scripts/install.sh|uninstall.sh|healthcheck.sh`, `tests/test_pipeline.py` (29 testes, `python3 -m unittest discover -s tests`), `README.md` (raiz), `docs/TESTES.md`.
+- `scripts/video_pipeline.py` (pipeline, CLI), `config/config.json`, `launchd/*.plist` (template), `scripts/install.sh|uninstall.sh|healthcheck.sh`, `tests/test_pipeline.py` (32 testes, `python3 -m unittest discover -s tests`), `README.md` (raiz), `docs/TESTES.md`.
 - **Pastas de trabalho ficam em `my-videos/` (`my-videos/incoming|processing|ready|originals|failed|logs|state`)** (`pipeline.home = "my-videos"`, relativo à raiz do projeto; ignoradas pelo git), por pedido do usuário. O usuário coloca vídeos (com subpastas) em `incoming/`; a estrutura de pastas é replicada em `/srv/videos`. Pastas vazias não são criadas no servidor.
 - Remote é uma classe (`SSHRemote`) trocável; testes usam `FakeRemote`.
 
@@ -96,3 +96,7 @@ Nota: o ping ICMP ao IP local falha mas o SSH funciona; não usar ping como test
 ## Git
 
 Repositório local (branch `main`), sem remote. `.gitignore` exclui `my-videos/*/*` (mantém `.gitkeep`), vídeos, `*.sqlite3`, logs e chaves. `config/config.json` É versionado (contém IPs da LAN/ZeroTier e UUID do microSD, nenhum segredo): não publicar em repositório público sem revisar.
+
+## Decisões do usuário
+
+- 2026-10-13: perfil `compact` (CRF 23) aprovado. `archive_originals_after_upload = true` (original é movido, nunca apagado, de `incoming/` para `originals/` após envio verificado).

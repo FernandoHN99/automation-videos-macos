@@ -110,7 +110,7 @@ class TestHappyPath(Base):
         self.assertEqual(j["decision"], "encoded")
         self.assertGreater(j["savings_percent"], 15)
         self.assertTrue((self.remote.root / "Python" / "Aula 01.mp4").exists())
-        self.assertEqual((self.inc / "Python" / "Aula 01.mp4").read_bytes(), orig)  # original intacto
+        self.assertEqual((self.p.d["originals"] / "Python" / "Aula 01.mp4").read_bytes(), orig)  # original intacto (arquivado)
         self.assertEqual(j["resolution"], "320x240")  # resolução preservada
         self.assertFalse(any((self.remote.root / vp.STAGING).glob("*.part")))
 
@@ -123,6 +123,31 @@ class TestHappyPath(Base):
             self.assertTrue((self.remote.root / a).is_file(), a)
         self.assertEqual({j["state"] for j in self.jobs()}, {"COMPLETED"})
         self.assertEqual(self.remote.sends, 4)
+
+    def test_original_arquivado_apos_envio_mantendo_pastas(self):
+        self.cfg["pipeline"]["archive_originals_after_upload"] = True
+        make_video(self.inc / "Python" / "Aula 01.mp4")
+        orig = (self.inc / "Python" / "Aula 01.mp4").read_bytes()
+        self.run_cycle()
+        arq = self.p.d["originals"] / "Python" / "Aula 01.mp4"
+        self.assertEqual(self.state_of(), "COMPLETED")
+        self.assertEqual(arq.read_bytes(), orig)                       # original intacto, só movido
+        self.assertFalse((self.inc / "Python" / "Aula 01.mp4").exists())
+        self.run_cycle()
+        self.assertEqual(len(self.jobs()), 1)                          # não reprocessa
+
+    def test_original_nao_e_arquivado_se_envio_falhou(self):
+        self.cfg["pipeline"]["archive_originals_after_upload"] = True
+        make_video(self.inc / "a.mp4"); self.remote.unmounted = True; self.run_cycle()
+        self.assertTrue((self.inc / "a.mp4").exists())
+        self.assertEqual(list(self.p.d["originals"].rglob("*.mp4")), [])
+
+    def test_arquivamento_nunca_sobrescreve(self):
+        self.cfg["pipeline"]["archive_originals_after_upload"] = True
+        (self.p.d["originals"]).mkdir(exist_ok=True); (self.p.d["originals"] / "a.mp4").write_bytes(b"antigo")
+        make_video(self.inc / "a.mp4"); self.run_cycle()
+        self.assertEqual((self.p.d["originals"] / "a.mp4").read_bytes(), b"antigo")
+        self.assertTrue((self.p.d["originals"] / "a (1).mp4").exists())
 
     def test_arquivo_ja_processado_nao_repete(self):
         make_video(self.inc / "a.mp4"); self.run_cycle()
@@ -181,12 +206,12 @@ class TestEntrada(Base):
         self.assertEqual(self.remote.sends, 0)
 
     def test_sem_economia_mantem_original(self):
-        make_video(self.inc / "magro.mp4", crf=45)
+        make_video(self.inc / "magro.mp4", crf=45); magro = (self.inc / "magro.mp4").read_bytes()
         self.cfg["encoding"]["profiles"]["balanced"] = {"crf": 10, "preset": "ultrafast"}
         self.run_cycle()
         j = self.jobs()[0]
         self.assertEqual((j["state"], j["decision"]), ("COMPLETED", "keep_original"))
-        self.assertEqual((self.remote.root / "magro.mp4").read_bytes(), (self.inc / "magro.mp4").read_bytes())
+        self.assertEqual((self.remote.root / "magro.mp4").read_bytes(), magro)
 
     def test_falha_do_ffmpeg_preserva_original(self):
         make_video(self.inc / "a.mp4")
@@ -265,7 +290,7 @@ class TestRecuperacao(Base):
         (self.p.d["processing"] / f"{jid}.mp4").write_bytes(b"lixo parcial")
         self.run_cycle()
         self.assertEqual(self.state_of(), "COMPLETED")
-        self.assertTrue((self.inc / "a.mp4").exists())
+        self.assertTrue((self.p.d["originals"] / "a.mp4").exists())  # original preservado (arquivado)
 
     def test_job_interrompido_no_uploading_continua(self):
         make_video(self.inc / "a.mp4"); self.remote.down = True; self.run_cycle()

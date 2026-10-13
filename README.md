@@ -45,7 +45,7 @@ flowchart LR
 | 🚫 **Nunca sobrescreve** | nome existente idêntico = já enviado; diferente = salva como `nome_<hash>.mp4` |
 | ♻️ **Recupera de falhas** | queda de energia, rede ou servidor desligado: nada se perde, retoma com backoff (5 min → 6 h) |
 | 🔒 **Uma execução por vez** | `flock` do kernel: nunca fica "preso", nunca converte dois vídeos juntos |
-| 🧪 **Testado** | 29 testes automatizados + execução real de ponta a ponta |
+| 🧪 **Testado** | 32 testes automatizados + execução real de ponta a ponta |
 
 ## Estrutura do projeto
 
@@ -65,7 +65,7 @@ flowchart LR
     ├── incoming/             #   coloque os vídeos aqui
     ├── processing/           #   conversões em andamento (temporário)
     ├── ready/                #   comprimidos, aguardando envio
-    ├── originals/            #   originais arquivados (opcional)
+    ├── originals/            #   originais arquivados após o envio verificado
     ├── failed/               #   reservado
     ├── logs/                 #   pipeline.log, errors.log
     └── state/                #   pipeline.sqlite3
@@ -152,7 +152,7 @@ Exemplo de log:
 | `pipeline.home` | `my-videos` | onde ficam `incoming/`, `ready/`, `logs/`, `state/`… |
 | `pipeline.file_stability_seconds` | `180` | só processa arquivos sem modificação há esse tempo |
 | `pipeline.max_encode_attempts` | `3` | falhas de conversão antes de marcar `FAILED` |
-| `pipeline.archive_originals_after_upload` | `false` | `true` move o original para `originals/` após o envio verificado |
+| `pipeline.archive_originals_after_upload` | `true` | move o original de `incoming/` para `originals/` (mesma estrutura de pastas) após o envio verificado; `false` o deixa em `incoming/` |
 | `pipeline.extensions` | mp4 mov mkv m4v webm | formatos aceitos |
 | `encoding.default_profile` | `compact` | `quality` (CRF 18), `balanced` (20), `compact` (23) |
 | `encoding.minimum_savings_percent` | `15` | abaixo disso, envia o original sem recodificar |
@@ -174,7 +174,7 @@ Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Po
 
 ## Segurança dos dados
 
-- **Originais nunca são apagados, movidos ou sobrescritos** (a menos que você ligue `archive_originals_after_upload`, e mesmo assim só após o envio verificado). O único arquivo removido é o derivado em `ready/`, regenerável.
+- **Originais nunca são apagados nem sobrescritos.** Após o envio verificado (`archive_originals_after_upload`, ligado), são apenas **movidos** de `incoming/` para `originals/`, e só se o arquivo não mudou desde o processamento. Se já existir um com o mesmo nome, ganha o sufixo ` (1)`. O único arquivo removido é o derivado em `ready/`, regenerável.
 - **Sem `--delete`**, sem sincronização destrutiva, sem `chown`/`chmod` no cartão exFAT.
 - **Nunca usa o disco interno do servidor como alternativa.** Se o microSD não estiver montado, o arquivo fica local e espera.
 - Sem senhas em scripts, JSON ou logs: autenticação só por chave SSH dedicada. O SSH nunca é exposto à internet; o acesso remoto é via ZeroTier.
@@ -209,4 +209,4 @@ Vídeos já muito comprimidos (ex.: 5 Mbps) podem **aumentar** com CRF baixo. Po
 python3 -m unittest discover -s tests -v
 ```
 
-29 testes (~5 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
+32 testes (~5 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.

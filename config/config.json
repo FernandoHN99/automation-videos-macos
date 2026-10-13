@@ -3,7 +3,7 @@
     "home": "my-videos",
     "file_stability_seconds": 180,
     "max_encode_attempts": 3,
-    "archive_originals_after_upload": false,
+    "archive_originals_after_upload": true,
     "extensions": [".mp4", ".mov", ".mkv", ".m4v", ".webm"],
     "dry_run": false
   },

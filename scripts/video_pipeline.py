@@ -451,14 +451,30 @@ class Pipeline:
     def complete(self, job, final):
         self.set(job["id"], state="COMPLETED", remote_rel=final, error=None, attempts=0)
         self.log.info("Published: %s. Job completed", final)
-        path = Path(job["upload_path"])
         if job["decision"] == "encoded":
-            path.unlink(missing_ok=True)  # derivado regenerável; o original nunca é tocado
-        elif self.cfg["pipeline"].get("archive_originals_after_upload", False):
-            dst = self.d["originals"] / job["src_rel"]
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if not dst.exists():
-                os.replace(path, dst)
+            Path(job["upload_path"]).unlink(missing_ok=True)  # derivado regenerável
+        if self.cfg["pipeline"].get("archive_originals_after_upload", False):
+            self.archive_original(job)
+
+    def archive_original(self, job):
+        """Move incoming/<rel> para originals/<rel> (mesma estrutura), só após envio verificado e
+        só se o arquivo ainda for exatamente o processado. Nunca sobrescreve: usa sufixo se já existir."""
+        src = self.d["incoming"] / job["src_rel"]
+        try:
+            st = src.stat()
+        except FileNotFoundError:
+            return
+        if st.st_size != job["size"] or st.st_mtime_ns != job["mtime_ns"]:
+            self.log.warning("Original mudou desde o processamento; não arquivado: %s", job["src_rel"])
+            return
+        dst = self.d["originals"] / job["src_rel"]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while dst.exists():
+            dst = dst.with_name(f"{dst.stem} ({n}){dst.suffix}")
+            n += 1
+        os.replace(src, dst)  # mesmo filesystem (my-videos/ e incoming/ no mesmo volume)
+        self.log.info("Original arquivado: originals/%s", dst.relative_to(self.d["originals"]))
 
     # -- execução
     def run_once(self):
