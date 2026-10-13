@@ -4,7 +4,7 @@
 #   install.sh --load    também carrega o LaunchAgent (ativa a automação)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PY="$(command -v python3)"; PY="$(python3 -c 'import os,sys;print(os.path.realpath(sys.executable))')"
+PY="$(command -v python3)"  # caminho estável (não o da versão em Cellar, que muda no brew upgrade)
 HOME_DIR="$ROOT/my-videos"  # pastas de trabalho (incoming, ready, logs...)
 LABEL=com.hpmini.videopipeline
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
