@@ -5,6 +5,9 @@ Modo "local" (padrão): incoming/ -> (estável?) -> vídeo: ffprobe -> ffmpeg ->
 verificada -> ready/ (mesma estrutura de pastas) -> original arquivado em originals/. O envio ao microSD é manual.
 Modo "upload" (opcional): após a validação, envia ao HP Mini por SSH (verifica UUID/exFAT, SHA-256, publica atômico).
 
+Execução manual: `run` (primeiro plano) ou `start` (segundo plano, sobrevive ao Terminal), com o Mac impedido de
+suspender (caffeinate) enquanto houver trabalho. Não há agendamento automático.
+
 Estados: WAITING_STABLE, QUEUED, PROCESSING, COMPLETED, FAILED, SUPERSEDED (+ UPLOAD_PENDING, UPLOADING no modo upload).
 Retentativas ficam em `next_attempt` (backoff exponencial) sem estado extra.
 Nunca apaga nem sobrescreve originais; nunca sobrescreve arquivo de destino; nunca usa --delete.
@@ -18,6 +21,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -252,6 +256,7 @@ class Pipeline:
         self.ffmpeg = cfg["encoding"].get("ffmpeg", "ffmpeg")
         self.ffprobe = cfg["encoding"].get("ffprobe", "ffprobe")
         self.exts = {e.lower() for e in p.get("extensions", [".mp4", ".mov", ".mkv", ".m4v", ".webm"])}
+        self._awake = None  # processo caffeinate que impede o Mac de suspender
 
     @property
     def local_mode(self):
@@ -541,6 +546,68 @@ class Pipeline:
         os.replace(src, dst)  # mesmo filesystem (my-videos/ e incoming/ no mesmo volume)
         self.log.info("Original arquivado: originals/%s", dst.relative_to(self.d["originals"]))
 
+    def keep_awake(self):
+        """Impede o Mac de suspender enquanto este processo roda. O caffeinate fica preso ao nosso PID (-w):
+        some sozinho quando saímos, até se o processo morrer. -s só vale na tomada; -i/-m evitam suspensão por ociosidade."""
+        if self._awake or not self.cfg["pipeline"].get("prevent_sleep", True) or not shutil.which("caffeinate"):
+            return
+        self._awake = subprocess.Popen(["caffeinate", "-i", "-m", "-s", "-w", str(os.getpid())])
+        self.log.info("Suspensão do Mac bloqueada enquanto houver processamento (caffeinate)")
+
+    def release_awake(self):
+        if self._awake:
+            self._awake.terminate()
+            self._awake = None
+
+    def running_pid(self):
+        """PID da execução em andamento (lock em mãos de outro processo) ou None."""
+        path = self.d["state"] / "pipeline.lock"
+        with open(path, "a+") as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                f.seek(0)
+                txt = f.read().strip()
+                return int(txt) if txt.isdigit() else -1
+            fcntl.flock(f, fcntl.LOCK_UN)
+        return None
+
+    def start_background(self, config_path=None):
+        """Dispara `run` desacoplado do Terminal (nova sessão): continua mesmo fechando a janela."""
+        pid = self.running_pid()
+        if pid is not None:
+            print(f"Já está rodando (PID {pid}). Acompanhe: tail -f {self.d['logs'] / 'pipeline.log'}")
+            return 0
+        cmd = [sys.executable, str(Path(__file__).resolve())] + (["--config", str(config_path)] if config_path else []) + ["run"]
+        with open(self.d["logs"] / "background.out.log", "a") as out:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True)
+        print(f"Rodando em segundo plano (PID {proc.pid}). Acompanhe: tail -f {self.d['logs'] / 'pipeline.log'}")
+        print("Para parar: python3 main.py stop")
+        return 0
+
+    def stop_background(self):
+        """Encerra a execução em andamento (incluindo o ffmpeg). Jobs interrompidos voltam à fila na próxima execução."""
+        pid = self.running_pid()
+        if pid is None:
+            print("Nada em execução.")
+            return 0
+        if pid <= 0:
+            print("Execução detectada, mas sem PID registrado; feche o Terminal onde ela roda.")
+            return 1
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        print(f"Execução encerrada (PID {pid}). Os arquivos em andamento continuam em incoming/ e voltam à fila na próxima vez.")
+        return 0
+
+    def waiting_for_stable(self):
+        """Quantos arquivos ainda esperam estabilizar (ignora os que já sumiram de incoming/)."""
+        n = 0
+        for r in self.db.execute("SELECT id, src_rel FROM jobs WHERE state='WAITING_STABLE'").fetchall():
+            if (self.d["incoming"] / r["src_rel"]).exists():
+                n += 1
+            else:
+                self.set(r["id"], state="SUPERSEDED")
+        return n
+
     def prune_empty_dirs(self):
         """Remove de incoming/ as pastas que ficaram vazias (só com .DS_Store) depois de arquivar os originais.
         Só mexe em pasta sem alteração há `file_stability_seconds`, para não atrapalhar uma cópia em andamento."""
@@ -558,25 +625,37 @@ class Pipeline:
 
     # -- execução
     def run_once(self):
-        lock = open(self.d["state"] / "pipeline.lock", "w")
+        """Uma execução completa: processa tudo o que está na fila e, se `wait_for_stable`, espera os arquivos
+        recém-copiados ficarem estáveis para processá-los também. Termina quando não resta nada a fazer agora."""
+        lock = open(self.d["state"] / "pipeline.lock", "a+")
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             lock.close()
             self.log.info("Outra execução em andamento; saindo")
             return False
+        lock.seek(0); lock.truncate(); lock.write(str(os.getpid())); lock.flush()  # permite status/stop acharem o PID
         try:  # o lock é do kernel: some sozinho se o processo morrer, nunca fica "preso"
             self.recover()
-            self.scan()
-            # arquivos que não são vídeo primeiro (rápidos); vídeos por último, do menor para o maior tempo de espera
-            for job in sorted(self.jobs("QUEUED"), key=lambda j: (self.is_video(j["src_rel"]), j["id"])):
-                self.process(job)
-            if not self.local_mode:
-                for job in self.jobs("UPLOAD_PENDING"):
-                    self.upload(job)
-            if self.cfg["pipeline"].get("archive_originals_after_upload", False):
-                self.prune_empty_dirs()
+            while True:
+                self.scan()
+                # arquivos que não são vídeo primeiro (rápidos); vídeos por último
+                queued = sorted(self.jobs("QUEUED"), key=lambda j: (self.is_video(j["src_rel"]), j["id"]))
+                if queued:
+                    self.keep_awake()
+                for job in queued:
+                    self.process(job)
+                if not self.local_mode:
+                    for job in self.jobs("UPLOAD_PENDING"):
+                        self.upload(job)
+                if self.cfg["pipeline"].get("archive_originals_after_upload", False):
+                    self.prune_empty_dirs()
+                if not self.cfg["pipeline"].get("wait_for_stable", True) or not self.waiting_for_stable():
+                    break
+                self.keep_awake()
+                time.sleep(self.cfg["pipeline"].get("poll_seconds", 15))
         finally:
+            self.release_awake()
             lock.close()
         return True
 
@@ -592,6 +671,8 @@ class Pipeline:
     def status(self, check_remote=False):
         q = lambda s, *a: self.db.execute(s, a).fetchall()
         print(f"Home: {self.home}")
+        pid = self.running_pid()
+        print(f"Execução: {'em andamento (PID %s)' % pid if pid is not None else 'parada'}")
         print("Estados:", {r[0]: r[1] for r in q("SELECT state, COUNT(*) FROM jobs GROUP BY state")} or "(vazio)")
         for title, st in (("Fila de processamento", "QUEUED"), ("Uploads pendentes", "UPLOAD_PENDING"), ("Aguardando estabilizar", "WAITING_STABLE")):
             rows = q("SELECT * FROM jobs WHERE state=?", st)
@@ -625,7 +706,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="VideoPipeline")
     ap.add_argument("--config")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for n, h in (("run", "ciclo completo: escanear, comprimir/copiar para ready/ (ou enviar, no modo upload)"), ("scan", "só descobrir arquivos novos"),
+    for n, h in (("run", "processa tudo agora, em primeiro plano (bloqueia a suspensão do Mac)"),
+                 ("start", "igual ao run, mas em segundo plano (continua se fechar o Terminal)"), ("stop", "encerra a execução em andamento"), ("scan", "só descobrir arquivos novos"),
                  ("retry", "recolocar falhas na fila"), ("dry-run", "mostrar o que seria feito, sem alterar nada")):
         sub.add_parser(n, help=h)
     s = sub.add_parser("status", help="estado geral"); s.add_argument("--remote", action="store_true", help="verificar servidor e microSD")
@@ -646,6 +728,10 @@ def main(argv=None):
         return 0
     if args.cmd == "run":
         p.run_once()
+    elif args.cmd == "start":
+        return p.start_background(args.config)
+    elif args.cmd == "stop":
+        return p.stop_background()
     elif args.cmd == "scan":
         p.scan()
     elif args.cmd == "retry":

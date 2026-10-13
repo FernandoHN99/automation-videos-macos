@@ -7,7 +7,10 @@
     "max_encode_attempts": 3,
     "archive_originals_after_upload": true,
     "extensions": [".mp4", ".mov", ".mkv", ".m4v", ".webm"],
-    "dry_run": false
+    "dry_run": false,
+    "prevent_sleep": true,
+    "wait_for_stable": true,
+    "poll_seconds": 15
   },
   "encoding": {
     "default_profile": "compact",

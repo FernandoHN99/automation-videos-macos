@@ -77,6 +77,7 @@ class Base(unittest.TestCase):
         self.cfg = copy.deepcopy(BASE_CFG)
         self.cfg["pipeline"]["home"] = str(self.tmp / "home")
         self.cfg["pipeline"]["file_stability_seconds"] = 0
+        self.cfg["pipeline"].update({"prevent_sleep": False, "wait_for_stable": False, "poll_seconds": 1})  # sem esperas nem caffeinate
         self.cfg["pipeline"]["mode"] = "upload"  # os testes antigos cobrem o envio por SSH (modo opcional)
         self.cfg["encoding"]["default_profile"] = "balanced"  # perfil rápido só para os testes (o padrão real é compact)
         self.cfg["encoding"]["profiles"]["balanced"] = {"crf": 28, "preset": "ultrafast"}
@@ -430,6 +431,56 @@ class TestModoLocal(Base):
     def test_nome_com_caractere_invalido_no_exfat_e_ajustado(self):
         (self.inc / "Aula: parte 1?.pdf").write_bytes(b"x"); self.run_cycle()
         self.assertTrue((self.ready / "Aula_ parte 1_.pdf").exists())
+
+
+class TestExecucaoManual(Base):
+    def setUp(self):
+        super().setUp()
+        self.cfg["pipeline"]["mode"] = "local"
+
+    def test_espera_arquivo_recem_copiado_ficar_estavel(self):
+        self.cfg["pipeline"].update({"wait_for_stable": True, "file_stability_seconds": 2, "poll_seconds": 1})
+        (self.inc / "novo.pdf").write_bytes(b"acabou de chegar")   # mtime = agora: ainda não está estável
+        self.p.run_once()                                          # uma única execução deve esperar e concluir
+        self.assertEqual(self.state_of(), "COMPLETED")
+
+    def test_espera_ignora_arquivo_que_sumiu(self):
+        self.cfg["pipeline"].update({"wait_for_stable": True, "file_stability_seconds": 3600})
+        (self.inc / "x.pdf").write_bytes(b"1"); self.p.scan()
+        (self.inc / "x.pdf").unlink()                              # usuário desistiu: não pode travar a execução
+        self.assertEqual(self.p.waiting_for_stable(), 0)
+        self.assertEqual(self.state_of(), "SUPERSEDED")
+
+    def test_caffeinate_preso_ao_pid_e_sem_duplicar(self):
+        from unittest import mock
+        self.cfg["pipeline"]["prevent_sleep"] = True
+        with mock.patch.object(vp.shutil, "which", return_value="/usr/bin/caffeinate"), \
+             mock.patch.object(vp.subprocess, "Popen") as popen:
+            self.p.keep_awake(); self.p.keep_awake()
+            popen.assert_called_once_with(["caffeinate", "-i", "-m", "-s", "-w", str(os.getpid())])
+            self.p.release_awake()
+            popen.return_value.terminate.assert_called_once()
+
+    def test_caffeinate_desligado_por_config(self):
+        from unittest import mock
+        self.cfg["pipeline"]["prevent_sleep"] = False
+        with mock.patch.object(vp.subprocess, "Popen") as popen:
+            self.p.keep_awake()
+            popen.assert_not_called()
+
+    def test_lock_registra_pid_para_status_e_stop(self):
+        import fcntl
+        visto = []
+        orig = self.p.process
+        self.p.process = lambda job: (visto.append(self.p.running_pid()), orig(job))[1]
+        (self.inc / "x.pdf").write_bytes(b"1"); self.run_cycle()
+        self.assertEqual(visto, [os.getpid()])  # durante a execução o lock guarda o nosso PID (status/stop o encontram)
+        self.assertIsNone(self.p.running_pid())  # terminou: lock livre
+        held = open(self.p.d["state"] / "pipeline.lock", "a+")
+        fcntl.flock(held, fcntl.LOCK_EX); held.seek(0); held.truncate(); held.write("12345"); held.flush()
+        self.assertEqual(self.p.running_pid(), 12345)
+        fcntl.flock(held, fcntl.LOCK_UN); held.close()
+        self.assertIsNone(self.p.running_pid())
 
 
 class TestUtilidades(unittest.TestCase):

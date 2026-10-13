@@ -9,7 +9,7 @@ Idioma de trabalho: português (Brasil). Leia o [README.md](README.md) para uso 
 - Não apagar, mover nem sobrescrever originais sem autorização. (Autorizado: após ficar pronto, o original é **movido** de `incoming/` para `originals/`; nunca apagado.)
 - Nunca formatar dispositivos nem tocar na formatação do microSD.
 - Não alterar File Browser, ZeroTier ou Debian sem necessidade comprovada. Não instalar nada no servidor (ele não tem rsync; por isso o modo upload usa `ssh cat`).
-- Sem Docker, VMs, IA residente ou dependências pesadas: só Python 3 (biblioteca padrão), FFmpeg, SSH, launchd.
+- Sem Docker, VMs, IA residente ou dependências pesadas: só Python 3 (biblioteca padrão), FFmpeg, SSH (modo upload) e `caffeinate`.
 - Nunca usar `--delete`; nunca sobrescrever arquivo de destino.
 - Sem senhas ou chaves em scripts, JSON ou logs.
 - Pedir aprovação antes de operações irreversíveis (ex.: apagar arquivos do servidor).
@@ -18,7 +18,7 @@ Idioma de trabalho: português (Brasil). Leia o [README.md](README.md) para uso 
 
 - **Modo padrão: `pipeline.mode = "local"`.** Vídeos → comprimidos (libx264, perfil `compact` = CRF 23, resolução e FPS originais; se economizar < 15% copia o original). Outros arquivos (PDF, imagem, zip...) → copiados iguais, SHA-256 conferido, datas preservadas. Nada vai por SSH.
 - **Modo `upload` (opcional, desligado):** envia vídeos ao HP Mini por `ssh cat` retomável, verificando UUID `6ACE-6E04`/exFAT/escrita/espaço antes de cada envio, SHA-256, `mv -n` atômico via `.pipeline-tmp/`. Testado de ponta a ponta com sucesso (clipe de 6,4 MB). Chave dedicada `~/.ssh/videopipeline_ed25519` já autorizada no servidor.
-- **LaunchAgent `com.hpmini.videopipeline` carregado**: roda ao carregar e a cada 15 min, `/opt/homebrew/bin/python3`, sem root, sem processo residente. Só funciona com a sessão do usuário ativa.
+- **Execução manual, sem agendamento (decisão do usuário, 2026-10-13):** o LaunchAgent foi removido. `python3 main.py start` roda em segundo plano (nova sessão, sobrevive ao Terminal); `run` em primeiro plano; `stop` encerra (mata o grupo de processos, inclusive o ffmpeg); `status` mostra o PID. Enquanto há trabalho, o `caffeinate -i -m -s -w <pid>` bloqueia a suspensão (verificado com `pmset -g assertions`); fechar a tampa do MacBook sem monitor externo suspende mesmo assim. O `run` espera arquivos recém-copiados ficarem estáveis (`wait_for_stable`, `poll_seconds`) e só termina quando não resta nada. O PID fica em `my-videos/state/pipeline.lock`.
 - Perfil `compact` e `archive_originals_after_upload = true` aprovados pelo usuário. Fluxo: validado/copiado → original vai de `incoming/` para `originals/`; `ready/` fica com os vídeos finais e os arquivos copiados; pastas vazias de `incoming/` são removidas (só as sem alteração há `file_stability_seconds`).
 - **Teste real concluído (2026-10-13):** `incoming/aula-01` (vídeo VP9 1080p de 2h11, 1,2 GB → 828 MB H.264, −30,7%, 27 min; 236 materiais idênticos por SHA-256 e datas preservadas). `incoming/` ficou limpo.
 - Pendente: o usuário arrastar `ready/` para o microSD; testar reboot do Mac.
@@ -28,9 +28,8 @@ Idioma de trabalho: português (Brasil). Leia o [README.md](README.md) para uso 
 ```
 main.py                      pipeline + CLI (arquivo único)
 support/config/config.json   configuração
-support/launchd/             modelo do plist
-support/scripts/             install.sh (--load ativa), uninstall.sh, healthcheck.sh
-support/tests/               43 testes: python3 -m unittest discover -s support/tests
+support/scripts/             healthcheck.sh
+support/tests/               48 testes: python3 -m unittest discover -s support/tests
 my-videos/                   dados, ignorados pelo git (.gitkeep mantém a estrutura)
   incoming/ processing/ ready/ originals/ logs/ state/
 ```
