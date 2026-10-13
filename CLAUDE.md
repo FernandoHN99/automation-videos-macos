@@ -54,4 +54,4 @@ Screencast de programação (1080p, trecho de 2 min): CRF 18 → −30%, CRF 20 
 
 ## Git
 
-Repositório local, branch `main`, sem remote. `support/config/config.json` é versionado (IPs da LAN/ZeroTier e UUID do microSD, nenhum segredo): revisar antes de publicar.
+Remote `origin`: https://github.com/FernandoHN99/automation-videos-macos (**PRIVADO**), branch `main`. `support/config/config.json` é versionado (IPs da LAN/ZeroTier, usuário e UUID do microSD, nenhum segredo): **não tornar o repositório público sem trocar esse arquivo por um exemplo** (o histórico também os contém).
