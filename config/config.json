@@ -1,0 +1,36 @@
+{
+  "pipeline": {
+    "home": "my-videos",
+    "file_stability_seconds": 180,
+    "max_encode_attempts": 3,
+    "archive_originals_after_upload": false,
+    "extensions": [".mp4", ".mov", ".mkv", ".m4v", ".webm"],
+    "dry_run": false
+  },
+  "encoding": {
+    "default_profile": "compact",
+    "profiles": {
+      "quality":  { "crf": 18, "preset": "medium" },
+      "balanced": { "crf": 20, "preset": "medium" },
+      "compact":  { "crf": 23, "preset": "medium" }
+    },
+    "pixel_format": "yuv420p",
+    "audio_bitrate": "128k",
+    "minimum_savings_percent": 15,
+    "faststart": true,
+    "nice": 10,
+    "ffmpeg": "ffmpeg",
+    "ffprobe": "ffprobe"
+  },
+  "remote": {
+    "ssh_user": "rick",
+    "local_host": "192.168.15.202",
+    "zerotier_host": "10.135.165.226",
+    "ssh_port": 22,
+    "ssh_key": "~/.ssh/videopipeline_ed25519",
+    "remote_root": "/srv/videos",
+    "expected_filesystem": "exfat",
+    "expected_uuid": "6ACE-6E04",
+    "min_free_gb": 1
+  }
+}
