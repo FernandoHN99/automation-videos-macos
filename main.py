@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """VideoPipeline: comprime vídeos no Mac (FFmpeg) e entrega tudo pronto em my-videos/ready/.
 
-Modo "local" (padrão): incoming/ -> (estável?) -> vídeo: ffprobe -> ffmpeg -> validação; outros arquivos: cópia
-verificada -> ready/ (mesma estrutura de pastas) -> original arquivado em originals/. O envio ao microSD é manual.
-Modo "upload" (opcional): após a validação, envia ao HP Mini por SSH (verifica UUID/exFAT, SHA-256, publica atômico).
+Fluxo: incoming/ -> (estável?) -> vídeo: ffprobe -> ffmpeg -> validação; outros arquivos: cópia verificada por SHA-256
+-> ready/ (mesma estrutura de pastas) -> original arquivado em originals/.
 
 Execução manual: `run` (primeiro plano) ou `start` (segundo plano, sobrevive ao Terminal), com o Mac impedido de
 suspender (caffeinate) enquanto houver trabalho. Não há agendamento automático.
 
-Estados: WAITING_STABLE, QUEUED, PROCESSING, COMPLETED, FAILED, SUPERSEDED (+ UPLOAD_PENDING, UPLOADING no modo upload).
+Estados: WAITING_STABLE, QUEUED, PROCESSING, COMPLETED, FAILED, SUPERSEDED.
 Retentativas ficam em `next_attempt` (backoff exponencial) sem estado extra.
-Nunca apaga nem sobrescreve originais; nunca sobrescreve arquivo de destino; nunca usa --delete.
+Nunca apaga nem sobrescreve originais; nunca sobrescreve arquivo de destino.
 """
 import argparse
 import fcntl
@@ -38,13 +37,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 TEMP_SUFFIXES = (".part", ".crdownload", ".download", ".tmp", ".aria2", ".!qb")
 BAD_CHARS = re.compile(r'[\x00-\x1f"*:<>?\\|]')
-STAGING = ".pipeline-tmp"  # dentro de remote_root, mesmo filesystem do destino final
 PROGRESS = "progress.json"  # em state/: progresso do encode atual, lido pelo painel
 DEFAULT_EXTS = (".mp4", ".mov", ".mkv", ".m4v", ".webm")
 
 
 class Transient(Exception):
-    """Falha temporária (rede, SSH, microSD ausente): tenta de novo mais tarde."""
+    """Falha temporária (pouco espaço em disco, cópia divergente): tenta de novo mais tarde."""
 
 
 class Permanent(Exception):
@@ -59,7 +57,7 @@ def load_config(path=None):
 
 
 def safe_part(part):
-    """Nome compatível com exFAT/Linux: NFC, sem caracteres proibidos, até 200 bytes."""
+    """Nome portável entre sistemas de arquivos: NFC, sem os caracteres que o Windows não aceita, até 200 bytes."""
     part = BAD_CHARS.sub("_", unicodedata.normalize("NFC", part)).rstrip(" .") or "_"
     while len(part.encode()) > 200:
         stem, dot, ext = part.rpartition(".")
@@ -267,7 +265,7 @@ def describe_settings(s):
              f"Se a economia ficar abaixo de {s['min_savings']}%, o original é copiado sem recomprimir (evita perda de qualidade à toa).",
              "Conferência: a saída só é aceita se resolução, duração (±1%), codec e presença de áudio baterem com o esperado."]
     if CODECS[s["codec"]] == "hevc":
-        lines.append("Atenção: HEVC é menor, mas aparelhos antigos (como o HP Mini) podem não conseguir reproduzir.")
+        lines.append("Atenção: HEVC é menor, mas players e aparelhos antigos podem não conseguir reproduzir.")
     if hw:
         lines.append("Atenção: o encoder de hardware é muito mais rápido, porém gera arquivos maiores para a mesma qualidade.")
     return lines
@@ -328,137 +326,40 @@ def parse_progress(line, cur):
     return cur
 
 
-# --------------------------------------------------------------------- remoto
-class SSHRemote:
-    """Toda a conversa com o HP Mini. Os testes substituem esta classe por uma falsa."""
-
-    def __init__(self, cfg, log):
-        self.c, self.log, self.host = cfg["remote"], log, None
-
-    def _ssh_opts(self):
-        o = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15",
-             "-o", "ServerAliveCountMax=4", "-o", "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR", "-p", str(self.c.get("ssh_port", 22))]
-        key = self.c.get("ssh_key")
-        if key:
-            o += ["-i", os.path.expanduser(key), "-o", "IdentitiesOnly=yes"]
-        return o
-
-    def _target(self):
-        return f"{self.c['ssh_user']}@{self.host}"
-
-    def ssh(self, command, stdin=None, timeout=120):
-        try:
-            r = subprocess.run(["ssh", *self._ssh_opts(), self._target(), command], input=stdin,
-                               capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            raise Transient("SSH expirou")
-        if r.returncode == 255:
-            raise Transient(f"SSH falhou: {r.stderr.strip()[:200]}")
-        return r
-
-    def connect(self):
-        for host in [h for h in (self.c.get("local_host"), self.c.get("zerotier_host")) if h]:
-            self.host = host
-            try:
-                if self.ssh("true", timeout=20).returncode == 0:
-                    self.log.info("HP Mini acessível em %s", host)
-                    return host
-            except Transient as e:
-                self.log.warning("%s indisponível: %s", host, e)
-        self.host = None
-        raise Transient("HP Mini inacessível por rede local e ZeroTier")
-
-    def verify_storage(self, needed_bytes):
-        """Recusa tudo se /srv/videos não for o microSD esperado (UUID + exfat + escrita + espaço)."""
-        c = self.c
-        if not c.get("expected_uuid"):
-            raise Transient("expected_uuid não configurado: upload bloqueado")
-        script = f"""R={shlex.quote(c['remote_root'])}
-SRC=$(findmnt -n -M "$R" -o SOURCE 2>/dev/null) || {{ echo "MOUNT=no"; exit 0; }}
-echo "MOUNT=yes"; echo "SOURCE=$SRC"
-echo "UUID=$(lsblk -no UUID "$SRC" 2>/dev/null | head -1)"
-echo "FSTYPE=$(lsblk -no FSTYPE "$SRC" 2>/dev/null | head -1)"
-echo "REAL=$(readlink -f "$R")"
-mkdir -p "$R/{STAGING}" 2>/dev/null && : > "$R/{STAGING}/.w" 2>/dev/null && rm -f "$R/{STAGING}/.w" && echo "WRITABLE=yes" || echo "WRITABLE=no"
-echo "AVAIL=$(df -PB1 "$R" | awk 'NR==2{{print $4}}')"
-"""
-        out = self.ssh("sh -s", stdin=script).stdout
-        info = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
-        problems = []
-        if info.get("MOUNT") != "yes":
-            problems.append(f"{c['remote_root']} NÃO é ponto de montagem (microSD ausente?)")
-        else:
-            if info.get("UUID") != c["expected_uuid"]:
-                problems.append(f"UUID {info.get('UUID')!r} != esperado {c['expected_uuid']!r}")
-            if c.get("expected_filesystem") and info.get("FSTYPE") != c["expected_filesystem"]:
-                problems.append(f"filesystem {info.get('FSTYPE')!r} != {c['expected_filesystem']!r}")
-            if info.get("REAL") != c["remote_root"]:
-                problems.append(f"caminho resolve para {info.get('REAL')!r}")
-            if info.get("WRITABLE") != "yes":
-                problems.append("sem permissão de escrita")
-            margin = int(c.get("min_free_gb", 1) * 1024**3)
-            if int(info.get("AVAIL") or 0) < needed_bytes + margin:
-                problems.append(f"espaço insuficiente ({human(info.get('AVAIL'))} livres)")
-        if problems:
-            raise Transient("verificação do microSD falhou: " + "; ".join(problems))
-        return info
-
-    def stat(self, rel):
-        """(tamanho, sha256) do arquivo remoto, ou None se não existe."""
-        p = shlex.quote(f"{self.c['remote_root']}/{rel}")
-        r = self.ssh(f"[ -f {p} ] && echo $(stat -c %s {p}) $(sha256sum {p} | cut -d' ' -f1)", timeout=3600)
-        parts = r.stdout.split()
-        return (int(parts[0]), parts[1]) if len(parts) == 2 else None
-
-    def send(self, local, job_id):
-        """Envia por `ssh cat` (o HP Mini não tem rsync; não instalamos nada lá), retomando do tamanho já gravado.
-        A integridade é garantida depois por tamanho + SHA-256 (`staged`)."""
-        part = shlex.quote(f"{self.c['remote_root']}/{STAGING}/{job_id}.part")
-        total = os.path.getsize(local)
-        have = self.ssh(f"stat -c %s {part} 2>/dev/null || echo 0").stdout.strip()
-        offset = int(have) if have.isdigit() else 0
-        if offset > total:  # parcial maior que o arquivo: lixo, recomeça
-            offset = 0
-        redirect = ">>" if offset else ">"
-        if offset:
-            self.log.info("Retomando upload em %s de %s", human(offset), human(total))
-        with open(local, "rb") as f:
-            f.seek(offset)
-            try:
-                r = subprocess.run(["ssh", *self._ssh_opts(), self._target(), f"cat {redirect} {part}"],
-                                   stdin=f, capture_output=True, text=True)
-            except OSError as e:
-                raise Transient(f"envio falhou: {e}")
-        if r.returncode != 0:
-            raise Transient(f"envio falhou ({r.returncode}): {r.stderr.strip()[:300]}")
-
-    def staged(self, job_id):
-        return self.stat(f"{STAGING}/{job_id}.part")
-
-    def publish(self, job_id, rel):
-        """Move do staging para o nome final sem sobrescrever (mv -n) e confirma."""
-        root = self.c["remote_root"]
-        src, dst = shlex.quote(f"{root}/{STAGING}/{job_id}.part"), shlex.quote(f"{root}/{rel}")
-        d = shlex.quote(os.path.dirname(f"{root}/{rel}"))
-        r = self.ssh(f"mkdir -p {d} && [ ! -e {dst} ] && mv -n {src} {dst}")
-        if r.returncode != 0:
-            raise Transient(f"publicação remota falhou (destino já existe?): {r.stderr.strip()[:200]}")
-
-
 # --------------------------------------------------------------------- pipeline
-# upload_path / remote_rel: no modo upload são o arquivo local a enviar e o caminho remoto final;
-# no modo local guardam o arquivo e o caminho relativo em ready/ (nomes herdados do modo upload).
+# output_path / output_rel: o arquivo final em ready/ (caminho completo e relativo a ready/).
 SCHEMA = """CREATE TABLE IF NOT EXISTS jobs(
  id INTEGER PRIMARY KEY, src_rel TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
  state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
  first_seen REAL, updated_at REAL, profile TEXT, decision TEXT, original_size INTEGER, output_size INTEGER,
  savings_bytes INTEGER, savings_percent REAL, duration REAL, resolution TEXT, video_codec TEXT,
- audio_codec TEXT, encoding_time REAL, upload_path TEXT, remote_rel TEXT, sha256 TEXT, error TEXT, settings TEXT,
+ audio_codec TEXT, encoding_time REAL, output_path TEXT, output_rel TEXT, sha256 TEXT, error TEXT, settings TEXT,
  UNIQUE(src_rel, size, mtime_ns))"""
 
 
+RENAMED_COLUMNS = (("upload_path", "output_path"), ("remote_rel", "output_rel"))  # nomes de versões anteriores
+
+
+def open_db(path):
+    """Abre o SQLite do pipeline (WAL: o painel lê em paralelo sem travar as escritas), criando a tabela
+    e atualizando bancos de versões anteriores."""
+    db = sqlite3.connect(path, timeout=30)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA synchronous=NORMAL")
+    db.execute(SCHEMA)
+    columns = {r[1] for r in db.execute("PRAGMA table_info(jobs)")}
+    if "settings" not in columns:  # bancos criados antes dos ajustes do painel
+        db.execute("ALTER TABLE jobs ADD COLUMN settings TEXT")
+    for old, new in RENAMED_COLUMNS:
+        if old in columns:
+            db.execute(f"ALTER TABLE jobs RENAME COLUMN {old} TO {new}")
+    db.commit()
+    return db
+
+
 class Pipeline:
-    def __init__(self, cfg, remote=None, dry_run=False):
+    def __init__(self, cfg, dry_run=False):
         self.cfg, self.dry = cfg, dry_run
         p = cfg["pipeline"]
         self.home = resolve_home(cfg)
@@ -466,32 +367,20 @@ class Pipeline:
         for d in self.d.values():
             d.mkdir(parents=True, exist_ok=True)
         self.log = self._logger()
-        self.db = sqlite3.connect(self.d["state"] / "pipeline.sqlite3", timeout=30)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA journal_mode=WAL")  # o painel lê em paralelo sem travar as escritas
-        self.db.execute("PRAGMA synchronous=NORMAL")
-        self.db.execute(SCHEMA)
-        if "settings" not in {r[1] for r in self.db.execute("PRAGMA table_info(jobs)")}:  # bancos criados antes dos ajustes do painel
-            self.db.execute("ALTER TABLE jobs ADD COLUMN settings TEXT")
-        self.remote = remote or SSHRemote(cfg, self.log)
+        self.db = open_db(self.d["state"] / "pipeline.sqlite3")
         self.ffmpeg = cfg["encoding"].get("ffmpeg", "ffmpeg")
         self.ffprobe = cfg["encoding"].get("ffprobe", "ffprobe")
         self.exts = {e.lower() for e in p.get("extensions", DEFAULT_EXTS)}
         self._awake = None  # processo caffeinate que impede o Mac de suspender
-
-    @property
-    def local_mode(self):
-        """local: comprime vídeos e copia o resto para ready/ (envio manual). upload: envia ao HP Mini por SSH."""
-        return self.cfg["pipeline"].get("mode", "local") == "local"
 
     def is_video(self, rel):
         return Path(rel).suffix.lower() in self.exts
 
     def eligible(self, p):
         """Arquivo de incoming/ que o pipeline considera: não oculto (.DS_Store, ._x, pastas com ponto),
-        não temporário (.part, .crdownload...) e, fora do modo local, só vídeo."""
+        não temporário (.part, .crdownload...) e, se `copy_non_video` estiver desligado, só vídeo."""
         hidden = any(part.startswith(".") for part in p.relative_to(self.d["incoming"]).parts)
-        copy_other = self.local_mode and self.cfg["pipeline"].get("copy_non_video", True)
+        copy_other = self.cfg["pipeline"].get("copy_non_video", True)
         return p.is_file() and not hidden and not p.name.lower().endswith(TEMP_SUFFIXES) and (copy_other or self.is_video(p.name))
 
     def walk_incoming(self, d=None):
@@ -530,8 +419,8 @@ class Pipeline:
         """Jobs no estado dado cuja próxima tentativa já venceu, na ordem de chegada."""
         return self.db.execute("SELECT * FROM jobs WHERE state=? AND next_attempt<=? ORDER BY id", (state, time.time())).fetchall()
 
-    def fail(self, job, exc, retry_state):
-        """Permanent -> FAILED (após max_attempts); Transient -> volta para `retry_state` com backoff."""
+    def fail(self, job, exc):
+        """Permanent -> FAILED (após max_attempts); Transient -> volta para a fila com backoff."""
         attempts = job["attempts"] + 1
         msg = f"{type(exc).__name__}: {exc}"
         if isinstance(exc, Permanent) and attempts >= self.cfg["pipeline"].get("max_encode_attempts", 3):
@@ -539,15 +428,15 @@ class Pipeline:
             return self.set(job["id"], state="FAILED", attempts=attempts, error=msg)
         delay = min(300 * 2 ** (attempts - 1), 6 * 3600)
         self.log.warning("falha em %s (tentativa %d, nova em %ds): %s", job["src_rel"], attempts, delay, msg)
-        self.set(job["id"], state=retry_state, attempts=attempts, next_attempt=time.time() + delay, error=msg)
+        self.set(job["id"], state="QUEUED", attempts=attempts, next_attempt=time.time() + delay, error=msg)
 
     # -- recuperação
     def recover(self):
         (self.d["state"] / PROGRESS).unlink(missing_ok=True)
-        for j in self.db.execute("SELECT * FROM jobs WHERE state IN ('PROCESSING','UPLOADING')").fetchall():
-            new = "QUEUED" if j["state"] == "PROCESSING" else "UPLOAD_PENDING"
-            self.log.warning("recuperando job interrompido %s: %s -> %s", j["src_rel"], j["state"], new)
-            self.set(j["id"], state=new)
+        # PROCESSING = interrompido no meio; UPLOADING/UPLOAD_PENDING = sobras do antigo envio a um servidor (não existe mais)
+        for j in self.db.execute("SELECT * FROM jobs WHERE state IN ('PROCESSING','UPLOADING','UPLOAD_PENDING')").fetchall():
+            self.log.warning("recuperando job interrompido %s: %s -> QUEUED", j["src_rel"], j["state"])
+            self.set(j["id"], state="QUEUED")
         for f in self.d["processing"].iterdir():  # só temporários nossos (<id>.mp4 / <id>.copy), sob o lock
             if re.fullmatch(r"\d+\.(mp4|copy)", f.name):
                 f.unlink()
@@ -626,7 +515,7 @@ class Pipeline:
         self.set(jid, state="PROCESSING")
         try:
             if not self.is_video(rel):
-                return self.finish_local(job, src, rel, "copy", move=False, fields=dict(original_size=st.st_size, output_size=st.st_size, savings_bytes=0, savings_percent=0.0))
+                return self.finish(job, src, rel, "copy", move=False, fields=dict(original_size=st.st_size, output_size=st.st_size, savings_bytes=0, savings_percent=0.0))
             info = probe(src, self.ffprobe)
             name, prof = self.profile()
             self.log.info("Input: %s | %dx%d@%s | %s/%s | %s | %.0fs", human(st.st_size), info["width"], info["height"],
@@ -661,30 +550,18 @@ class Pipeline:
             common = dict(profile=name, original_size=st.st_size, duration=info["duration"], resolution=f"{info['width']}x{info['height']}",
                           video_codec=info["vcodec"], audio_codec=info["acodec"], encoding_time=enc_time, settings=settings_key(prof))
             if pct >= prof["min_savings"]:
-                if self.local_mode:
-                    return self.finish_local(job, tmp, Path(rel).with_suffix(".mp4").as_posix(), "encoded", move=True,
-                                             fields=dict(output_size=out_size, savings_bytes=saved, savings_percent=pct, **common))
-                dst = self.d["ready"] / Path(rel).with_suffix(".mp4")
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(tmp, dst)  # mesmo filesystem: atômico
-                self.set(jid, state="UPLOAD_PENDING", decision="encoded", output_size=out_size, savings_bytes=saved,
-                         savings_percent=pct, upload_path=str(dst), remote_rel=safe_rel(Path(rel).with_suffix(".mp4").as_posix()),
-                         attempts=0, next_attempt=0, error=None, **common)
-            else:
-                tmp.unlink(missing_ok=True)
-                self.log.info("Economia abaixo do mínimo: mantendo o original (sem perda geracional)")
-                if self.local_mode:
-                    return self.finish_local(job, src, rel, "keep_original", move=False,
-                                             fields=dict(output_size=st.st_size, savings_bytes=0, savings_percent=0.0, **common))
-                self.set(jid, state="UPLOAD_PENDING", decision="keep_original", output_size=st.st_size, savings_bytes=0,
-                         savings_percent=0.0, upload_path=str(src), remote_rel=safe_rel(rel), attempts=0, next_attempt=0,
-                         error=None, **common)
+                return self.finish(job, tmp, Path(rel).with_suffix(".mp4").as_posix(), "encoded", move=True,
+                                   fields=dict(output_size=out_size, savings_bytes=saved, savings_percent=pct, **common))
+            tmp.unlink(missing_ok=True)
+            self.log.info("Economia abaixo do mínimo: mantendo o original (sem perda geracional)")
+            return self.finish(job, src, rel, "keep_original", move=False,
+                               fields=dict(output_size=st.st_size, savings_bytes=0, savings_percent=0.0, **common))
         except (Transient, Permanent) as e:
-            self.fail(job, e, "QUEUED")
+            self.fail(job, e)
         except Exception as e:  # erro inesperado: não perde o job
-            self.fail(job, Transient(repr(e)), "QUEUED")
+            self.fail(job, Transient(repr(e)))
 
-    # -- modo local: tudo termina em ready/
+    # -- saída: tudo termina em ready/
     def place(self, path, rel_out, jid, move):
         """Põe `path` em ready/<rel_out> sem nunca sobrescrever: idêntico = reaproveita; diferente = sufixo ' (n)'.
         Cópia de arquivo que não é vídeo é feita via processing/ e verificada por SHA-256 antes de aparecer em ready/
@@ -713,72 +590,22 @@ class Pipeline:
             os.replace(tmp, dst)
         return dst, sha
 
-    def finish_local(self, job, path, rel_out, decision, move, fields):
+    def finish(self, job, path, rel_out, decision, move, fields):
+        """Entrega o resultado em ready/ e conclui o job; só então o original é arquivado."""
         try:
             dst, sha = self.place(path, rel_out, job["id"], move)
         except (Transient, Permanent) as e:
-            return self.fail(job, e, "QUEUED")
+            return self.fail(job, e)
         out = dst.relative_to(self.d["ready"]).as_posix()
-        self.set(job["id"], state="COMPLETED", decision=decision, upload_path=str(dst), remote_rel=out, sha256=sha,
+        self.set(job["id"], state="COMPLETED", decision=decision, output_path=str(dst), output_rel=out, sha256=sha,
                  attempts=0, next_attempt=0, error=None, **fields)
         self.log.info("Pronto em ready/%s [%s]. Job completed", out, decision)
-        if self.cfg["pipeline"].get("archive_originals_after_upload", False):
-            self.archive_original(job)
-
-    # -- upload
-    def upload(self, job):
-        jid, rel = job["id"], job["remote_rel"]
-        path = Path(job["upload_path"])
-        self.set(jid, state="UPLOADING")
-        try:
-            if not path.exists() or path.stat().st_size != job["output_size"]:
-                raise Permanent("arquivo local a enviar sumiu ou mudou de tamanho")
-            size = path.stat().st_size
-            sha = job["sha256"] or sha256_file(path)
-            self.set(jid, sha256=sha)
-            self.remote.connect()
-            self.remote.verify_storage(size)
-            self.log.info("HP Mini acessível; microSD verificado (UUID %s)", self.cfg["remote"]["expected_uuid"])
-            final = rel
-            existing = self.remote.stat(final)
-            if existing:
-                if existing == (size, sha):
-                    self.log.info("Já existe idêntico no servidor: %s", final)
-                    return self.complete(job, final)
-                stem, ext = os.path.splitext(rel)
-                final = f"{stem}_{sha[:8]}{ext}"
-                self.log.warning("Conflito de nome (conteúdo diferente) em %s; usando %s", rel, final)
-                again = self.remote.stat(final)
-                if again == (size, sha):
-                    return self.complete(job, final)
-                if again:
-                    raise Permanent(f"destino {final} existe com conteúdo diferente")
-            self.log.info("Upload started: %s", final)
-            self.remote.send(path, jid)
-            got = self.remote.staged(jid)
-            if got != (size, sha):
-                raise Transient(f"verificação remota divergente: {got} != {(size, sha)}")
-            self.log.info("Remote checksum verified")
-            self.remote.publish(jid, final)
-            if self.remote.stat(final) != (size, sha):
-                raise Transient("arquivo final remoto divergente após publicação")
-            self.complete(job, final)
-        except (Transient, Permanent) as e:
-            self.fail(job, e, "UPLOAD_PENDING")
-        except Exception as e:
-            self.fail(job, Transient(repr(e)), "UPLOAD_PENDING")
-
-    def complete(self, job, final):
-        self.set(job["id"], state="COMPLETED", remote_rel=final, error=None, attempts=0)
-        self.log.info("Published: %s. Job completed", final)
-        if job["decision"] == "encoded":
-            Path(job["upload_path"]).unlink(missing_ok=True)  # derivado regenerável
-        if self.cfg["pipeline"].get("archive_originals_after_upload", False):
+        if self.cfg["pipeline"].get("archive_originals", False):
             self.archive_original(job)
 
     def archive_original(self, job):
-        """Move incoming/<rel> para originals/<rel> (mesma estrutura), só após envio verificado e
-        só se o arquivo ainda for exatamente o processado. Nunca sobrescreve: usa sufixo se já existir."""
+        """Move incoming/<rel> para originals/<rel> (mesma estrutura), só depois de o resultado estar verificado
+        em ready/ e só se o arquivo ainda for exatamente o processado. Nunca sobrescreve: usa sufixo se já existir."""
         src = self.d["incoming"] / job["src_rel"]
         try:
             st = src.stat()
@@ -864,7 +691,7 @@ class Pipeline:
         return n
 
     def prune_if_enabled(self):
-        if self.cfg["pipeline"].get("archive_originals_after_upload", False):
+        if self.cfg["pipeline"].get("archive_originals", False):
             self.prune_empty_dirs()
 
     def prune_empty_dirs(self):
@@ -908,9 +735,6 @@ class Pipeline:
                     attempted.add(job["id"])
                     self.process(job)
                     self.prune_if_enabled()  # e a cada arquivo pronto (cobre pasta que só ficou vazia agora)
-                if not self.local_mode:
-                    for job in self.jobs("UPLOAD_PENDING"):
-                        self.upload(job)
                 self.prune_if_enabled()
                 if not self.cfg["pipeline"].get("wait_for_stable", True) or not self.waiting_for_stable():
                     self.scan()  # arquivos que chegaram (ex.: pelo painel) enquanto processávamos
@@ -927,19 +751,19 @@ class Pipeline:
     def retry(self):
         n = 0
         for j in self.db.execute("SELECT * FROM jobs WHERE state='FAILED'").fetchall():
-            self.set(j["id"], state="UPLOAD_PENDING" if j["upload_path"] else "QUEUED", attempts=0, next_attempt=0)
+            self.set(j["id"], state="QUEUED", attempts=0, next_attempt=0)
             n += 1
-        for j in self.db.execute("SELECT * FROM jobs WHERE state IN ('QUEUED','UPLOAD_PENDING') AND next_attempt>0").fetchall():
+        for j in self.db.execute("SELECT * FROM jobs WHERE state='QUEUED' AND next_attempt>0").fetchall():
             self.set(j["id"], next_attempt=0)
         return n
 
-    def status(self, check_remote=False):
+    def status(self):
         q = lambda s, *a: self.db.execute(s, a).fetchall()
         print(f"Home: {self.home}")
         pid = self.running_pid()
         print(f"Execução: {'em andamento (PID %s)' % pid if pid is not None else 'parada'}")
         print("Estados:", {r[0]: r[1] for r in q("SELECT state, COUNT(*) FROM jobs GROUP BY state")} or "(vazio)")
-        for title, st in (("Fila de processamento", "QUEUED"), ("Uploads pendentes", "UPLOAD_PENDING"), ("Aguardando estabilizar", "WAITING_STABLE")):
+        for title, st in (("Fila de processamento", "QUEUED"), ("Aguardando estabilizar", "WAITING_STABLE")):
             rows = q("SELECT * FROM jobs WHERE state=?", st)
             if rows:
                 print(f"{title}:")
@@ -948,7 +772,7 @@ class Pipeline:
                     print(f"  - {r['src_rel']} {human(r['original_size'])}{wait}" + (f" ERRO: {r['error'][:100]}" if r["error"] else ""))
         print("Últimos concluídos:")
         for r in q("SELECT * FROM jobs WHERE state='COMPLETED' ORDER BY updated_at DESC LIMIT 5"):
-            print(f"  - {r['remote_rel']}: {human(r['original_size'])} -> {human(r['output_size'])} ({r['savings_percent']:.1f}%) [{r['decision']}]")
+            print(f"  - {r['output_rel']}: {human(r['original_size'])} -> {human(r['output_size'])} ({r['savings_percent']:.1f}%) [{r['decision']}]")
         tot = q("SELECT COALESCE(SUM(savings_bytes),0), COALESCE(SUM(original_size),0) FROM jobs WHERE state='COMPLETED'")[0]
         print(f"Economia total: {human(tot[0])} de {human(tot[1])} originais")
         errs = q("SELECT src_rel, state, error FROM jobs WHERE error IS NOT NULL ORDER BY updated_at DESC LIMIT 5")
@@ -956,14 +780,6 @@ class Pipeline:
             print("Erros recentes:")
             for r in errs:
                 print(f"  - {r['src_rel']} [{r['state']}]: {r['error'][:160]}")
-        if check_remote:
-            try:
-                self.remote.connect()
-                info = self.remote.verify_storage(0)
-                print(f"Servidor OK ({self.remote.host}): {info.get('SOURCE')} UUID={info.get('UUID')} {info.get('FSTYPE')} livre={human(info.get('AVAIL'))}")
-            except Transient as e:
-                print(f"Servidor/microSD: PROBLEMA: {e}")
-                return 1
         return 0
 
 
@@ -1060,7 +876,7 @@ class DashboardData:
             save_frac = (v["o"] - v["f"]) / v["o"] if v["o"] else 0.0
             sec_per_media = e["t"] / e["d"] if e["d"] else None
             sec_per_byte = e["t"] / e["o"] if e["o"] else None
-            out["recent"] = [dict(name=r["remote_rel"], original=r["original_size"], output=r["output_size"], percent=r["savings_percent"] or 0.0,
+            out["recent"] = [dict(name=r["output_rel"], original=r["original_size"], output=r["output_size"], percent=r["savings_percent"] or 0.0,
                                   decision=r["decision"]) for r in q("SELECT * FROM jobs WHERE state='COMPLETED' ORDER BY updated_at DESC LIMIT 8")]
             out["session"] = []  # concluídos desde que a execução atual começou (o `run` regrava o lock ao iniciar)
             if pid is not None:
@@ -1068,7 +884,7 @@ class DashboardData:
                     t0 = (self.home / "state" / "pipeline.lock").stat().st_mtime - 1
                 except OSError:
                     t0 = now
-                out["session"] = [dict(rel=r["remote_rel"] or r["src_rel"], t=r["encoding_time"] or 0, original=r["original_size"] or 0, output=r["output_size"] or 0,
+                out["session"] = [dict(rel=r["output_rel"] or r["src_rel"], t=r["encoding_time"] or 0, original=r["original_size"] or 0, output=r["output_size"] or 0,
                                        percent=r["savings_percent"] or 0.0)
                                   for r in q("SELECT * FROM jobs WHERE state='COMPLETED' AND updated_at>=? ORDER BY updated_at LIMIT 400", t0)]
             prog = self.progress() if pid is not None else None
@@ -1209,6 +1025,9 @@ def serve_dashboard(cfg, port, config_path=None, open_browser=False):
     encoders = available_encoders(cfg["encoding"].get("ffmpeg", "ffmpeg"))
     for n in ("incoming", "processing", "ready", "originals", "logs", "state"):  # mesma estrutura que o Pipeline cria
         (data.home / n).mkdir(parents=True, exist_ok=True)
+    dbfile = state / "pipeline.sqlite3"
+    if dbfile.exists() and not peek_pid(state):  # o painel não cria Pipeline: atualiza aqui um banco de versão anterior
+        open_db(dbfile).close()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -1311,7 +1130,9 @@ def serve_dashboard(cfg, port, config_path=None, open_browser=False):
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)  # só loopback: não aparece na rede
     except OSError:  # porta ocupada: provavelmente o painel já está aberto em outro terminal
-        print(f"A porta {port} já está em uso; se for o painel, ele continua em {url}")
+        print(f"A porta {port} já está em uso; se for um painel aberto antes de uma atualização, encerre-o e rode de novo:\n"
+              f"  kill $(lsof -ti tcp:{port} -sTCP:LISTEN)\n"
+              f"Se for o painel atual, ele continua em {url}")
         if open_browser:
             webbrowser.open(url)
         return 1
@@ -1335,7 +1156,7 @@ def main(argv=None):
                  ("start", "igual ao run, mas em segundo plano (continua se fechar o Terminal)"), ("stop", "encerra a execução em andamento"), ("scan", "só descobrir arquivos novos"),
                  ("retry", "recolocar falhas na fila"), ("dry-run", "mostrar o que seria feito, sem alterar nada")):
         sub.add_parser(n, help=h)
-    s = sub.add_parser("status", help="estado geral"); s.add_argument("--remote", action="store_true", help="verificar servidor e microSD")
+    sub.add_parser("status", help="estado geral")
     for name in ("app", "dashboard"):  # `app` abre o navegador; `dashboard` só sobe o servidor
         d = sub.add_parser(name, help="painel em http://127.0.0.1:<porta>: enviar arquivos, iniciar, parar e acompanhar"
                            + (" (abre o navegador)" if name == "app" else ""))
@@ -1369,7 +1190,7 @@ def main(argv=None):
     elif args.cmd == "retry":
         print(f"{p.retry()} job(s) recolocado(s) na fila")
     elif args.cmd == "status":
-        return p.status(args.remote)
+        return p.status()
     return 0
 
 

@@ -1,11 +1,10 @@
 {
   "pipeline": {
     "home": "my-videos",
-    "mode": "local",
     "copy_non_video": true,
     "file_stability_seconds": 180,
     "max_encode_attempts": 3,
-    "archive_originals_after_upload": true,
+    "archive_originals": true,
     "extensions": [".mp4", ".mov", ".mkv", ".m4v", ".webm"],
     "dry_run": false,
     "prevent_sleep": true,
@@ -26,16 +25,5 @@
     "nice": 10,
     "ffmpeg": "ffmpeg",
     "ffprobe": "ffprobe"
-  },
-  "remote": {
-    "ssh_user": "rick",
-    "local_host": "192.168.15.202",
-    "zerotier_host": "10.135.165.226",
-    "ssh_port": 22,
-    "ssh_key": "~/.ssh/videopipeline_ed25519",
-    "remote_root": "/srv/videos",
-    "expected_filesystem": "exfat",
-    "expected_uuid": "6ACE-6E04",
-    "min_free_gb": 1
   }
 }

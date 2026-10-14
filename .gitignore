@@ -15,7 +15,7 @@ my-videos/*/*
 *.log
 *.lock
 
-# --- Segredos (a chave SSH fica em ~/.ssh, fora do repo, mas por garantia) ---
+# --- Segredos: nunca versionar ---
 *.pem
 *_ed25519
 *_rsa
