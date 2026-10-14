@@ -10,6 +10,8 @@ my-videos/*/*
 # --- Estado de execução ---
 *.sqlite3
 *.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
 *.log
 *.lock
 

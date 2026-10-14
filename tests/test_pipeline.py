@@ -5,14 +5,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import main as vp  # noqa: E402
 
-BASE_CFG = json.loads((ROOT / "support" / "config" / "config.json").read_text())
+BASE_CFG = json.loads((ROOT / "config" / "config.json").read_text())
 
 
 def make_video(path, crf=12, audio=True, seconds=2, size="320x240"):
@@ -398,6 +399,17 @@ class TestModoLocal(Base):
         self.assertTrue((self.inc / "a" / "video.mp4").exists())          # pasta continua, pois ainda tem o vídeo
         self.assertFalse((self.inc / "a" / "pronto.pdf").exists())
 
+    def test_pastas_vazias_antigas_somem_durante_a_fila_e_nao_no_fim(self):
+        (self.inc / "velha" / "a" / "b").mkdir(parents=True); (self.inc / "velha" / "c").mkdir()
+        (self.inc / "velha" / "c" / ".DS_Store").write_bytes(b"x")
+        make_video(self.inc / "x.mp4", seconds=1); make_video(self.inc / "y.mp4", seconds=1)
+        seen, real = [], self.p.process
+        def espia(job):
+            seen.append((self.inc / "velha").exists()); real(job)
+        self.p.process = espia
+        self.run_cycle()
+        self.assertEqual(seen, [False, False])  # já tinha sumido antes do 1º vídeo (não só ao terminar a fila)
+
     def test_pasta_vazia_recente_ou_com_arquivo_pendente_e_mantida(self):
         self.cfg["pipeline"]["file_stability_seconds"] = 3600
         (self.inc / "copiando" / "sub").mkdir(parents=True)      # pasta nova: usuário pode estar copiando
@@ -508,6 +520,225 @@ class TestExecucaoManual(Base):
         self.assertEqual(self.p.running_pid(), 12345)
         fcntl.flock(held, fcntl.LOCK_UN); held.close()
         self.assertIsNone(self.p.running_pid())
+
+
+class TestPainel(Base):
+    """Progresso ao vivo do ffmpeg, cópia com SHA único e dados do painel (somente leitura)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg["pipeline"]["mode"] = "local"
+
+    def test_parse_progress(self):
+        cur = {}
+        for line in ("out_time_us=1500000\n", "speed=3.2x\n", "progress=continue\n"):
+            vp.parse_progress(line, cur)
+        self.assertEqual((cur["out_time"], cur["speed"], cur["done"]), (1.5, 3.2, False))
+        vp.parse_progress("speed=N/A\n", cur); vp.parse_progress("progress=end\n", cur)
+        self.assertEqual((cur["speed"], cur["done"]), (3.2, True))  # N/A não sobrescreve
+
+    def test_order_queue_videos_por_ultimo(self):
+        rows = [{"id": 1, "src_rel": "a.mp4"}, {"id": 2, "src_rel": "b.pdf"}, {"id": 3, "src_rel": "c.MOV"}, {"id": 4, "src_rel": "d.zip"}]
+        self.assertEqual([r["id"] for r in vp.order_queue(rows, {".mp4", ".mov"})], [2, 4, 1, 3])
+
+    def test_copy_hashed_igual_ao_sha256_file(self):
+        src, dst = self.tmp / "o.bin", self.tmp / "c.bin"
+        src.write_bytes(os.urandom(9_000_000)); os.utime(src, (1_700_000_000, 1_700_000_000))
+        self.assertEqual(vp.copy_hashed(src, dst), vp.sha256_file(src))
+        self.assertEqual(dst.read_bytes(), src.read_bytes())
+        self.assertEqual(int(dst.stat().st_mtime), 1_700_000_000)
+
+    def test_encode_devolve_rc_e_limpa_progress(self):
+        make_video(self.inc / "a.mp4", seconds=2)
+        info = vp.probe(self.inc / "a.mp4")
+        out = self.p.d["processing"] / "1.mp4"
+        cmd = self.p.build_cmd(self.inc / "a.mp4", out, info, self.p.profile()[1])
+        self.assertIn("-progress", cmd)
+        rc, err = self.p.encode(cmd, {"id": 1, "src_rel": "a.mp4", "size": 1}, info, out)
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.is_file())
+        self.assertFalse((self.p.d["state"] / vp.PROGRESS).exists())
+        rc, err = self.p.encode(cmd[:-1] + ["/nao/existe/x.mp4"], {"id": 1, "src_rel": "a.mp4", "size": 1}, info, out)
+        self.assertNotEqual(rc, 0); self.assertTrue(err.strip())
+
+    def test_painel_snapshot(self):
+        make_video(self.inc / "aula" / "a.mp4")
+        (self.inc / "aula" / "m.pdf").write_bytes(os.urandom(2000))
+        self.p.run_once()  # histórico: 1 vídeo codificado + 1 PDF copiado
+        make_video(self.inc / "aula" / "b.mp4")
+        (self.inc / "z.pdf").write_bytes(b"x")
+        self.p.scan(); self.p.db.execute("UPDATE jobs SET state='QUEUED' WHERE state='WAITING_STABLE'"); self.p.db.commit()
+        snap = vp.DashboardData(self.cfg).snapshot()
+        self.assertFalse(snap["running"])
+        self.assertEqual((snap["done"]["count"], snap["done"]["copied"]), (2, 1))
+        self.assertGreater(snap["done"]["saved"], 0)
+        self.assertEqual([q["rel"] for q in snap["queue"]], ["z.pdf", "aula/b.mp4"])  # não-vídeo antes
+        self.assertGreater(snap["queue"][1]["duration"], 0)
+        self.assertGreater(snap["queue"][1]["est"], 0)
+        self.assertGreater(snap["eta"]["seconds"], 0)
+        self.assertEqual(snap["forecast"]["bytes"], snap["queue"][1]["size"])
+        self.assertGreater(snap["forecast"]["saved"], 0)
+
+    def test_painel_sem_banco(self):
+        cfg = copy.deepcopy(self.cfg); cfg["pipeline"]["home"] = str(self.tmp / "vazio")
+        snap = vp.DashboardData(cfg).snapshot()
+        self.assertEqual((snap["queue"], snap["current"], snap["running"]), ([], None, False))
+
+    def test_scan_ordem_e_ocultos(self):
+        for rel in ("b/2.pdf", "a.pdf", "b/1.pdf", ".oculta/x.pdf", "b/.DS_Store"):
+            (self.inc / rel).parent.mkdir(parents=True, exist_ok=True); (self.inc / rel).write_bytes(b"1")
+        self.assertEqual([p.relative_to(self.inc).as_posix() for p in self.p.walk_incoming()], ["a.pdf", "b/1.pdf", "b/2.pdf"])
+
+
+class TestPainelEscrita(Base):
+    """Envio de arquivos, token e Host do painel (escrita só com token, só em loopback)."""
+
+    def test_incoming_target_recusa_caminhos_perigosos(self):
+        for bad in ("", "/etc/passwd", "../x.mp4", "a/../../x", "a//b", ".oculto/x.pdf", "a/.DS_Store", "a/\x00b"):
+            with self.assertRaises(ValueError, msg=bad):
+                vp.incoming_target(self.inc, bad)
+        self.assertEqual(vp.incoming_target(self.inc, "aula%201/a%20b.mp4"), self.inc / "aula 1" / "a b.mp4")
+
+    def test_save_upload_nao_sobrescreve_e_preserva_data(self):
+        import io
+        a = vp.save_upload(self.inc, "aula/x.pdf", io.BytesIO(b"um"), 2, 1_700_000_000_000)
+        b = vp.save_upload(self.inc, "aula/x.pdf", io.BytesIO(b"dois"), 4)
+        self.assertEqual((a, b), ("aula/x.pdf", "aula/x (1).pdf"))
+        self.assertEqual((self.inc / a).read_bytes(), b"um")
+        self.assertEqual(int((self.inc / a).stat().st_mtime), 1_700_000_000)
+        self.assertEqual([p.name for p in (self.inc / "aula").iterdir() if p.name.endswith(".part")], [])
+        with self.assertRaises(OSError):  # corpo menor que o Content-Length: nada fica
+            vp.save_upload(self.inc, "aula/y.pdf", io.BytesIO(b"x"), 5)
+        self.assertEqual(sorted(p.name for p in (self.inc / "aula").iterdir()), ["x (1).pdf", "x.pdf"])
+
+    def test_servidor_exige_token_e_host(self):
+        import threading, urllib.request, urllib.error, socket
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        threading.Thread(target=vp.serve_dashboard, args=(self.cfg, port), daemon=True).start()
+        base = f"http://127.0.0.1:{port}"
+        for _ in range(50):
+            try:
+                html = urllib.request.urlopen(base + "/").read().decode(); break
+            except OSError:
+                time.sleep(0.1)
+        token = html.split('name="vp-token" content="')[1].split('"')[0]
+        self.assertNotIn("__TOKEN__", html)
+
+        def post(path, body=b"", headers=None):
+            req = urllib.request.Request(base + path, data=body, method="POST", headers=headers or {})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        self.assertEqual(post("/api/upload", b"x", {"X-Rel": "a.pdf"})[0], 403)  # sem token
+        self.assertFalse((self.inc / "a.pdf").exists())
+        ok = post("/api/upload", b"hello", {"X-VP-Token": token, "X-Rel": "pasta/a.pdf", "X-Mtime": "1700000000000"})
+        self.assertEqual(ok, (200, {"saved": "pasta/a.pdf"}))
+        self.assertEqual((self.inc / "pasta" / "a.pdf").read_bytes(), b"hello")
+        self.assertEqual(post("/api/upload", b"x", {"X-VP-Token": token, "X-Rel": "../fora.pdf"})[0], 400)
+        from unittest import mock
+        with mock.patch.object(vp, "peek_pid", return_value=123):  # com o processamento rodando, nada é aceito
+            self.assertEqual(post("/api/upload", b"x", {"X-VP-Token": token, "X-Rel": "b.pdf"})[0], 409)
+        self.assertFalse((self.inc / "b.pdf").exists())
+        self.assertEqual(post("/api/stop", b"", {"X-VP-Token": token})[1], {"stopped": None})  # nada rodando
+        req = urllib.request.Request(base + "/api/status", headers={"Host": "evil.example"})  # DNS rebinding
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req)
+        self.assertEqual(cm.exception.code, 403)
+
+
+class TestAjustes(Base):
+    """Parâmetros de compressão: o padrão não muda nada; ajustes do painel são validados e aplicados."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg["pipeline"]["mode"] = "local"
+        self.info = dict(width=1920, height=1080, fps=30.0, acodec="aac", vcodec="h264", duration=10.0)
+
+    def cmd(self, **over):
+        s = vp.clean_settings(over, vp.default_settings(self.cfg))
+        return vp.build_ffmpeg_cmd(self.cfg, "in.mp4", "out.mp4", self.info, s)
+
+    def test_padrao_gera_exatamente_o_comando_de_sempre(self):
+        s = vp.default_settings(self.cfg)
+        self.assertEqual((s["crf"], s["preset"], s["codec"]), (28, "ultrafast", "libx264"))  # perfil de teste do Base
+        self.cfg["encoding"]["default_profile"] = "compact"  # o padrão real: CRF 23, medium
+        legacy = ["nice", "-n", "0", "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", "in.mp4", "-map", "0:v:0", "-map", "0:a:0",
+                  "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "copy", "-map_metadata", "0",
+                  "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", "out.mp4"]
+        self.cfg["encoding"]["nice"] = 10
+        self.assertEqual(self.cmd(), ["nice", "-n", "10"] + legacy[3:])
+        self.info.update(acodec="mp3", width=1919)  # áudio não-AAC vira AAC 128k; dimensão ímpar ganha scale
+        c = self.cmd()
+        self.assertIn("scale=trunc(iw/2)*2:trunc(ih/2)*2", c); self.assertEqual(c[c.index("-c:a") + 1:c.index("-c:a") + 4], ["aac", "-b:a", "128k"])
+
+    def test_ajustes_viram_flags(self):
+        c = self.cmd(max_height=720, max_fps=24, audio="none", copy_metadata=False, tune="film", profile="high", faststart=False, threads=4, crf=18, preset="slow")
+        for a, b in (("-crf", "18"), ("-preset", "slow"), ("-tune", "film"), ("-profile:v", "high"), ("-map_metadata", "-1"), ("-threads", "4"), ("-vf", "scale=-2:720,fps=24")):
+            self.assertEqual(c[c.index(a) + 1], b, a)
+        self.assertNotIn("-movflags", c); self.assertNotIn("-c:a", c); self.assertEqual(c.count("-map"), 1)  # sem áudio: só o mapa do vídeo
+        h = self.cmd(codec="libx265", tune="grain"); self.assertIn("hvc1", h)
+        v = self.cmd(codec="h264_videotoolbox", vt_quality=70); self.assertEqual(v[v.index("-q:v") + 1], "70"); self.assertNotIn("-crf", v)
+        self.info["height"] = 480; self.assertNotIn("scale", " ".join(self.cmd(max_height=720)))  # nunca amplia
+
+    def test_valores_perigosos_ou_invalidos_sao_recusados(self):
+        base = vp.default_settings(self.cfg)
+        for bad in ({"codec": "libx264; rm -rf /"}, {"crf": 99}, {"crf": "abc"}, {"crf": True}, {"preset": "-y"}, {"tune": "film", "codec": "libx265"},
+                    {"profile": "high", "codec": "libx265"}, {"max_height": 999}, {"audio_bitrate": "1;"}, {"faststart": "sim"}, {"nome": 1}, {"threads": 99}):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                vp.clean_settings(bad, base)
+        self.assertEqual(vp.clean_settings({"crf": "20", "max_height": "720"}, base)["max_height"], 720)
+
+    def test_encode_real_com_ajustes_redimensiona_remove_audio_e_registra(self):
+        make_video(self.inc / "a.mp4", size="640x480")
+        vp.save_settings(self.cfg, self.p.d["state"], {"max_height": 360, "audio": "none"})
+        self.assertEqual(self.p.profile()[0], "custom")
+        self.run_cycle()
+        j = self.jobs()[0]
+        self.assertEqual((j["state"], j["decision"], j["profile"]), ("COMPLETED", "encoded", "custom"), j["error"])
+        out = vp.probe(self.p.d["ready"] / "a.mp4")
+        self.assertEqual((out["width"], out["height"], out["acodec"]), (480, 360, None))
+        self.assertEqual(json.loads(j["settings"])["max_height"], 360)
+
+    def test_salvar_igual_ao_padrao_apaga_o_arquivo(self):
+        f = self.p.d["state"] / vp.SETTINGS_FILE
+        vp.save_settings(self.cfg, self.p.d["state"], {"crf": 30}); self.assertTrue(f.exists())
+        vp.save_settings(self.cfg, self.p.d["state"], {}, reset=True); self.assertFalse(f.exists())
+        self.assertEqual(self.p.profile()[0], "balanced")  # voltou ao padrão (nome do perfil do config)
+        f.write_text("{lixo"); self.assertEqual(vp.effective_settings(self.cfg, self.p.d["state"]), vp.default_settings(self.cfg))  # arquivo corrompido = padrão
+
+    def test_api_de_ajustes(self):
+        import threading, urllib.request, urllib.error, socket
+        from unittest import mock
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        threading.Thread(target=vp.serve_dashboard, args=(self.cfg, port), daemon=True).start()
+        base = f"http://127.0.0.1:{port}"
+        for _ in range(50):
+            try:
+                html = urllib.request.urlopen(base + "/").read().decode(); break
+            except OSError:
+                time.sleep(0.1)
+        token = html.split('name="vp-token" content="')[1].split('"')[0]
+
+        def post(body, tok=token):
+            req = urllib.request.Request(base + "/api/settings", data=json.dumps(body).encode(), method="POST", headers={"X-VP-Token": tok})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        g = json.loads(urllib.request.urlopen(base + "/api/settings").read())
+        self.assertFalse(g["custom"]); self.assertIn("-crf", g["preview"]); self.assertNotIn("nice", g["preview"]); self.assertNotIn("-progress", g["preview"])
+        self.assertEqual(post({"settings": {"crf": 30}}, "errado")[0], 403)
+        code, r = post({"settings": {"crf": 30, "max_height": 720}})
+        self.assertEqual((code, r["custom"], r["settings"]["crf"]), (200, True, 30)); self.assertIn("720", " ".join(r["description"]))
+        self.assertEqual(post({"settings": {"crf": 99}})[0], 400)
+        self.assertEqual(post({"settings": {"codec": "nao_existe"}})[0], 400)
+        with mock.patch.object(vp, "peek_pid", return_value=1):
+            self.assertEqual(post({"reset": True})[0], 409)
+        self.assertTrue(json.loads(urllib.request.urlopen(base + "/api/settings").read())["custom"])  # o 409 não mexeu
+        self.assertFalse(post({"reset": True})[1]["custom"])
 
 
 class TestUtilidades(unittest.TestCase):
