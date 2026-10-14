@@ -1,0 +1,68 @@
+/* Moldura do console: painéis rentes separados por fios de 1 px (o fundo da grade aparece nos vãos). */
+
+.app {
+  min-height: 100dvh;
+  padding: var(--s-3);
+}
+
+.console {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1.25fr) auto minmax(0, 1fr);
+  grid-template-areas:
+    "top   top    top"
+    "hero  hero   side"
+    "time  time   time"
+    "queue recent recipe";
+  gap: 1px;
+  height: calc(100dvh - 2 * var(--s-3));
+  min-height: 700px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.console > * {
+  min-width: 0;
+  min-height: 0;
+  background: var(--panel);
+}
+
+.side {
+  grid-area: side;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 1px;
+  background: var(--line);
+}
+
+.side > * {
+  min-height: 0;
+  background: var(--panel);
+}
+
+@media (max-width: 1100px) {
+  .console {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: "top" "hero" "side" "time" "queue" "recent" "recipe";
+    height: auto;
+    min-height: 0;
+  }
+
+  .console .panel__body {
+    max-height: 380px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app {
+    padding: 0;
+  }
+
+  .console {
+    border: 0;
+    border-radius: 0;
+  }
+}

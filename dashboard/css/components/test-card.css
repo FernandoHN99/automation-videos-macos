@@ -1,0 +1,79 @@
+/* Carta de ajuste SMPTE: 68% barras, 8% faixa invertida, 24% PLUGE. O véu (--veil) apaga a carta para o texto ler bem por cima. */
+
+.testcard {
+  position: absolute;
+  inset: 0 0 auto 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  transition: height 0.8s var(--ease-out);
+}
+
+.testcard::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--panel);
+  opacity: var(--veil, 0.75);
+  transition: opacity 0.6s;
+}
+
+.testcard > * {
+  flex-basis: 0;
+  min-height: 0;
+  transition: flex-grow 0.8s var(--ease-out);
+  animation: power-on 1s var(--ease-out) both;
+}
+
+.testcard__bars {
+  flex-grow: 68;
+  background: linear-gradient(
+    90deg,
+    var(--bar-white) 0 14.2857%,
+    var(--bar-yellow) 0 28.5714%,
+    var(--bar-cyan) 0 42.8571%,
+    var(--bar-green) 0 57.1428%,
+    var(--bar-magenta) 0 71.4285%,
+    var(--bar-red) 0 85.7142%,
+    var(--bar-blue) 0
+  );
+}
+
+.testcard__strip {
+  flex-grow: 8;
+  animation-delay: 0.08s;
+  background: linear-gradient(
+    90deg,
+    var(--bar-blue) 0 14.2857%,
+    var(--bar-black) 0 28.5714%,
+    var(--bar-magenta) 0 42.8571%,
+    var(--bar-black) 0 57.1428%,
+    var(--bar-cyan) 0 71.4285%,
+    var(--bar-black) 0 85.7142%,
+    var(--bar-white) 0
+  );
+}
+
+.testcard__pluge {
+  flex-grow: 24;
+  animation-delay: 0.16s;
+  background: linear-gradient(
+    90deg,
+    #00214c 0 17.86%,
+    #ebebeb 0 35.72%,
+    #32006a 0 53.58%,
+    var(--bar-black) 0 71.44%,
+    #090909 0 78.58%,
+    var(--bar-black) 0 85.72%,
+    #1d1d1d 0 92.86%,
+    var(--bar-black) 0
+  );
+}
+
+/* a carta "liga" da esquerda para a direita (na abertura do painel e quando o arrastar de arquivos começa) */
+@keyframes power-on {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}

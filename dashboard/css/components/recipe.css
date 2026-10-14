@@ -1,0 +1,45 @@
+.recipe {
+  grid-area: recipe;
+  --signal: var(--faint);
+}
+
+.recipe[data-custom="true"] {
+  --signal: var(--custom);
+}
+
+.recipe__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.recipe__list {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.recipe__line {
+  color: var(--muted);
+}
+
+.recipe__line dt,
+.recipe__line dd {
+  display: inline;
+}
+
+.recipe__line dt {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.recipe__line dt::after {
+  content: ":";
+}
+
+.recipe__line dd::before {
+  content: " ";
+}
+
+.recipe__warning {
+  color: var(--live-ink);
+}

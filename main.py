@@ -968,8 +968,19 @@ class Pipeline:
 
 
 # --------------------------------------------------------------------- painel (só em 127.0.0.1; leitura + enviar/iniciar/parar)
-DASHBOARD_HTML = ROOT / "dashboard" / "index.html"
+DASHBOARD_DIR = ROOT / "dashboard"
+DASHBOARD_HTML = DASHBOARD_DIR / "index.html"
+STATIC_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 STALE_PROGRESS = 20  # s sem atualização: o encode não está mais rodando
+
+
+def static_asset(rel):
+    """(bytes, content-type) de um css/js/svg de dashboard/, ou None. Recusa tipos não listados e qualquer caminho que saia da pasta."""
+    ctype = STATIC_TYPES.get(Path(unquote(rel)).suffix.lower())
+    target = (DASHBOARD_DIR / unquote(rel)).resolve()
+    if ctype is None or DASHBOARD_DIR.resolve() not in target.parents or not target.is_file():
+        return None
+    return target.read_bytes(), ctype
 
 
 def peek_pid(state_dir):
@@ -1225,13 +1236,16 @@ def serve_dashboard(cfg, port, config_path=None, open_browser=False):
             try:
                 if path == "/api/status":
                     snap = data.snapshot()
-                    snap["free"] = shutil.disk_usage(data.home).free
+                    usage = shutil.disk_usage(data.home)
+                    snap["free"], snap["disk_total"] = usage.free, usage.total
                     self._send(200, snap)
                 elif path == "/api/settings":
                     self._send(200, settings_payload(cfg, state, encoders))
                 elif path in ("/", "/index.html"):
                     html = DASHBOARD_HTML.read_text().replace("__TOKEN__", token)
                     self._send(200, html.encode(), "text/html; charset=utf-8")
+                elif path.startswith("/static/") and (asset := static_asset(path[len("/static/"):])):
+                    self._send(200, *asset)
                 else:
                     self._send(404, b"not found", "text/plain")
             except Exception as e:  # o painel nunca derruba o servidor

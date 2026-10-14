@@ -1,0 +1,120 @@
+.queue {
+  grid-area: queue;
+  --signal: var(--queued);
+}
+
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  padding: 0 var(--s-4) var(--s-2);
+}
+
+.segmented__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 3px var(--s-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.segmented__button:hover {
+  color: var(--text);
+}
+
+.segmented__button[aria-pressed="true"] {
+  border-color: var(--line-strong);
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.segmented__button .figure {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  text-align: center;
+}
+
+.segmented__button[data-alert="true"] .figure {
+  background: var(--fault-soft);
+  color: var(--fault-ink);
+}
+
+/* ---------- linhas de arquivo (fila, aguardando, falhas) ---------- */
+
+.file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px var(--s-4);
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.file-row:first-child {
+  border-top: 0;
+}
+
+.file-row[data-tone="live"] {
+  padding-left: var(--s-3);
+  box-shadow: inset 2px 0 0 var(--live);
+}
+
+.file-row[data-tone="live"] .file-row__primary {
+  color: var(--live-ink);
+}
+
+.file-row__main,
+.recent__main {
+  display: grid;
+  min-width: 0;
+}
+
+.file-row__title,
+.file-row__where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-row__where,
+.file-row__note {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.file-row__side {
+  display: grid;
+  justify-items: end;
+  text-align: right;
+}
+
+.file-row__primary {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.file-row__note {
+  white-space: nowrap;
+}
+
+.file-row__error {
+  grid-column: 1 / -1;
+  color: var(--fault-ink);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.file-row--more {
+  display: block;
+  color: var(--muted);
+}

@@ -1,0 +1,41 @@
+.hero {
+  grid-area: hero;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.hero__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: clamp(var(--s-4), 2.4vw, var(--s-6));
+}
+
+.hero[data-mode="empty"] {
+  --veil: 0.72;
+}
+
+.hero[data-mode="waiting"] {
+  --veil: 0.8;
+}
+
+.hero[data-mode="staged"] {
+  --veil: 0.94;
+}
+
+/* processando: a carta encolhe para uma fita de 4 px com as barras acesas */
+.hero[data-mode="live"] {
+  --veil: 0;
+}
+
+.hero[data-mode="live"] .testcard {
+  height: 4px;
+}
+
+.hero[data-mode="live"] .testcard__strip,
+.hero[data-mode="live"] .testcard__pluge {
+  flex-grow: 0.001;
+}

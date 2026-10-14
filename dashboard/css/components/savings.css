@@ -1,0 +1,95 @@
+.savings {
+  --signal: var(--saved);
+}
+
+.savings__content {
+  display: grid;
+  gap: var(--s-3);
+  padding-top: var(--s-2); /* o corpo do painel rola e corta o que passa do topo */
+}
+
+.savings__headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-3);
+}
+
+.savings__figure {
+  color: var(--saved-ink);
+  font-family: var(--font-display);
+  font-size: clamp(48px, 7.5vh, 76px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.savings__rate {
+  color: var(--saved-ink);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+}
+
+/* a barra inteira é o tamanho de antes; a parte lisa é o que sobrou e a hachurada é o que foi economizado */
+.savings__bar {
+  height: 14px;
+  border: 1px solid color-mix(in srgb, var(--saved) 50%, transparent);
+  border-radius: 3px;
+  background: var(--saved-hatch);
+  overflow: hidden;
+}
+
+.savings__after {
+  display: block;
+  height: 100%;
+  background: var(--saved);
+  transition: width 1s var(--ease-out);
+}
+
+.savings__captions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s-1) var(--s-3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.savings__facts {
+  display: grid;
+  gap: var(--s-1);
+  max-width: 52ch;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* ---------- disco ---------- */
+
+.disk__body {
+  padding: 0 var(--s-4) var(--s-4);
+}
+
+.disk__body:empty {
+  display: none;
+}
+
+.disk__gauge {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.disk__gauge i {
+  display: block;
+  height: 100%;
+  background: var(--faint);
+}
+
+.disk[data-low="true"] .disk__gauge i {
+  background: var(--fault);
+}
+
+.disk[data-low="true"] .panel__meta {
+  color: var(--fault-ink);
+}

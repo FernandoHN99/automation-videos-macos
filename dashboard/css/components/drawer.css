@@ -1,0 +1,184 @@
+/* Gaveta de ajustes de compressão (um <dialog> modal encostado à direita). */
+
+.drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(480px, 100vw);
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line-strong);
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.drawer[open] {
+  display: flex;
+  flex-direction: column;
+  animation: drawer-in 0.3s var(--ease-out);
+}
+
+.drawer::backdrop {
+  background: rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(2px);
+}
+
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+}
+
+.drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.drawer__head h2 {
+  font-size: var(--fs-lg);
+}
+
+.drawer__body {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: var(--s-4);
+  padding: var(--s-4);
+  overflow: auto;
+}
+
+.drawer__lead {
+  max-width: 56ch;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.drawer__lock {
+  color: var(--live-ink);
+}
+
+.drawer__form {
+  display: grid;
+  gap: var(--s-4);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.drawer__form:disabled {
+  opacity: 0.55;
+}
+
+.drawer__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.chip-button {
+  padding: 5px var(--s-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.chip-button:hover:not(:disabled) {
+  border-color: var(--muted);
+  color: var(--text);
+}
+
+.chip-button[aria-pressed="true"] {
+  border-color: var(--live);
+  background: var(--live-soft);
+  color: var(--live-ink);
+}
+
+.drawer__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4);
+}
+
+.field[data-wide="true"] {
+  grid-column: 1 / -1;
+}
+
+.field label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.field__value {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.field small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+.drawer__checks {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  cursor: pointer;
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--live);
+}
+
+.command {
+  position: relative;
+  padding: var(--s-3) 96px var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--bg);
+  color: var(--muted);
+  font: var(--fs-xs) / 1.7 var(--font-code);
+  word-break: break-all;
+}
+
+.command b {
+  color: var(--live-ink);
+  font-weight: 500;
+}
+
+.command__hint {
+  color: var(--faint);
+}
+
+.command__copy {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-2);
+}
+
+@media (max-width: 480px) {
+  .drawer__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,0 +1,30 @@
+/* Claquete sobre a carta de ajuste: o texto fica em uma superfície sólida, nunca direto sobre as barras. */
+
+.slate {
+  display: grid;
+  align-self: center;
+  gap: var(--s-3);
+  max-width: 36rem;
+  padding: var(--s-5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  background: var(--panel);
+}
+
+.slate__title {
+  font-size: var(--fs-2xl);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.slate__lead {
+  max-width: 46ch;
+  color: var(--muted);
+}
+
+.slate__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}

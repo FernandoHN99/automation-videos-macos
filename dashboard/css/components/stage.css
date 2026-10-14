@@ -1,0 +1,124 @@
+/* Arquivos escolhidos, antes de enviar. */
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  align-self: stretch;
+  width: 100%;
+  min-height: 0;
+  padding: var(--s-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  background: var(--panel);
+}
+
+.stage__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.stage__title {
+  font-size: var(--fs-xl);
+}
+
+.stage__add {
+  display: flex;
+  gap: var(--s-1);
+}
+
+.stage__list {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 2px;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.stage__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 34px;
+  padding: var(--s-1) var(--s-2) var(--s-1) var(--s-3);
+  border-radius: var(--r-ctl);
+  background: var(--panel-raised);
+}
+
+.stage__row svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--queued-ink);
+}
+
+.stage__row[data-failed="true"] {
+  outline: 1px solid var(--fault);
+}
+
+.stage__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage__size {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.stage__summary {
+  color: var(--muted);
+}
+
+.stage__summary b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.progress {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--live);
+  transition: width 0.3s linear;
+}
+
+.stage__progress-info {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-1);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.stage__progress-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}

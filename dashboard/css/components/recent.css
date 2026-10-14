@@ -1,0 +1,49 @@
+.recent {
+  grid-area: recent;
+  --signal: var(--saved);
+}
+
+.recent__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px var(--s-4);
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.recent__row:first-child {
+  border-top: 0;
+}
+
+.recent__side {
+  display: grid;
+  justify-items: end;
+  text-align: right;
+}
+
+.recent__delta {
+  color: var(--muted);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.recent__row[data-saved="true"] .recent__delta {
+  color: var(--saved-ink);
+}
+
+/* a trilha é o tamanho original; o preenchimento é o que sobrou depois de comprimir */
+.recent__bar {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--saved-hatch);
+  overflow: hidden;
+}
+
+.recent__bar i {
+  display: block;
+  height: 100%;
+  background: var(--saved);
+}

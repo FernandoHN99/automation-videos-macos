@@ -648,6 +648,64 @@ class TestPainelEscrita(Base):
         self.assertEqual(cm.exception.code, 403)
 
 
+class TestPainelArquivos(unittest.TestCase):
+    """Os módulos do painel (css/js) saem de /static; nada fora de dashboard/ e nenhuma referência quebrada."""
+
+    DASH = ROOT / "dashboard"
+
+    def test_static_asset_serve_css_js_e_svg(self):
+        self.assertEqual(vp.static_asset("js/app.js")[1], "text/javascript; charset=utf-8")
+        self.assertEqual(vp.static_asset("css/main.css")[1], "text/css; charset=utf-8")
+        self.assertEqual(vp.static_asset("icon.svg")[1], "image/svg+xml")
+        self.assertEqual(vp.static_asset("js/app.js")[0], (self.DASH / "js" / "app.js").read_bytes())
+
+    def test_static_asset_recusa_o_que_nao_e_do_painel(self):
+        for bad in ("../main.py", "%2e%2e/main.py", "js/../../main.py", "/etc/passwd", "index.html", "css/nao-existe.css", "js", "css/components"):
+            self.assertIsNone(vp.static_asset(bad), msg=bad)
+
+    def test_modulos_e_estilos_referenciados_existem(self):
+        """Sem build: um import ou @import apontando para arquivo inexistente só apareceria no navegador."""
+        import re
+        missing = []
+        for js in (self.DASH / "js").rglob("*.js"):
+            for ref in re.findall(r'(?:from|import)\s*\(?\s*"(\.{1,2}/[^"]+)"', js.read_text()):
+                if not (js.parent / ref).resolve().is_file():
+                    missing.append(f"{js.relative_to(self.DASH)} -> {ref}")
+        for css in (self.DASH / "css").rglob("*.css"):
+            for ref in re.findall(r'@import\s+"([^"]+)"', css.read_text()):
+                if not (css.parent / ref).resolve().is_file():
+                    missing.append(f"{css.relative_to(self.DASH)} -> {ref}")
+        for ref in re.findall(r'(?:href|src)="/static/([^"]+)"', (self.DASH / "index.html").read_text()):
+            if vp.static_asset(ref) is None:
+                missing.append(f"index.html -> {ref}")
+        self.assertEqual(missing, [])
+
+    def test_servidor_entrega_static_e_recusa_saida_da_pasta(self):
+        import threading, urllib.request, urllib.error, socket
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        cfg = copy.deepcopy(BASE_CFG)
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        cfg["pipeline"]["home"] = str(tmp / "home")
+        threading.Thread(target=vp.serve_dashboard, args=(cfg, port), daemon=True).start()
+        base = f"http://127.0.0.1:{port}"
+        for _ in range(50):
+            try:
+                r = urllib.request.urlopen(base + "/static/js/app.js"); break
+            except OSError:
+                time.sleep(0.1)
+        self.assertEqual((r.status, r.headers["Content-Type"]), (200, "text/javascript; charset=utf-8"))
+        for path in ("/static/../main.py", "/static/%2e%2e/main.py", "/static/index.html", "/static/js/nada.js"):
+            with self.assertRaises(urllib.error.HTTPError, msg=path) as cm:
+                urllib.request.urlopen(base + path)
+            self.assertEqual(cm.exception.code, 404, msg=path)
+        with self.assertRaises(urllib.error.HTTPError) as cm:  # outro Host não alcança nem os arquivos estáticos
+            urllib.request.urlopen(urllib.request.Request(base + "/static/js/app.js", headers={"Host": "evil.example"}))
+        self.assertEqual(cm.exception.code, 403)
+        snapshot = json.loads(urllib.request.urlopen(base + "/api/status").read())
+        self.assertGreater(snapshot["disk_total"], snapshot["free"])
+
+
 class TestAjustes(Base):
     """Parâmetros de compressão: o padrão não muda nada; ajustes do painel são validados e aplicados."""
 

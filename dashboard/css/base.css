@@ -1,0 +1,273 @@
+/* Reset, tipografia base e controles compartilhados. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--fs-md) / 1.5 var(--font-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--live-ink);
+  outline-offset: 2px;
+  border-radius: var(--r-ctl);
+}
+
+/* números de leitura: DIN, com algarismos de largura fixa para não tremerem */
+.figure {
+  font-family: var(--font-figure);
+  font-variant-numeric: tabular-nums;
+}
+
+.is-muted {
+  color: var(--muted);
+}
+
+.is-fault {
+  color: var(--fault-ink);
+}
+
+.is-saved {
+  color: var(--saved-ink);
+}
+
+.is-warn {
+  color: var(--live-ink);
+}
+
+/* ---------- botões ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  min-height: 36px;
+  padding: 0 var(--s-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  background: var(--panel-raised);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 0.15s, border-color 0.15s, transform 0.12s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.btn--primary {
+  border-color: transparent;
+  background: var(--live);
+  color: var(--on-signal);
+}
+
+.btn--primary:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--live) 86%, white);
+}
+
+.btn--danger {
+  border-color: color-mix(in srgb, var(--fault) 55%, transparent);
+  color: var(--fault-ink);
+}
+
+.btn--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.btn--quiet:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--line);
+  color: var(--text);
+}
+
+.btn--sm {
+  min-height: 30px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-sm);
+}
+
+.btn--icon {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
+/* ---------- selo ---------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 24px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-pill);
+  background: var(--line);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chip[data-tone="fault"] {
+  background: var(--fault-soft);
+  color: var(--fault-ink);
+}
+
+.chip[data-tone="warn"] {
+  background: var(--live-soft);
+  color: var(--live-ink);
+}
+
+.chip[data-tone="custom"] {
+  background: var(--custom-soft);
+  color: var(--custom-ink);
+}
+
+button.chip:hover {
+  filter: brightness(1.15);
+}
+
+/* ---------- painel: cabeçalho, corpo rolável e estado vazio ---------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+
+.panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-4);
+  padding: var(--s-3) var(--s-4) var(--s-2);
+}
+
+/* a marca colorida liga o painel ao sinal que ele representa */
+.panel__title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-md);
+}
+
+.panel__title::before {
+  content: "";
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--signal, var(--line-strong));
+}
+
+.panel__meta {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.panel__body {
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--s-4) var(--s-4);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.empty {
+  padding: var(--s-5) 0;
+  color: var(--muted);
+}
+
+/* ---------- campos de formulário ---------- */
+
+.select,
+.number {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  background: var(--panel-raised);
+}
+
+.range {
+  width: 100%;
+  accent-color: var(--live);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

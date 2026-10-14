@@ -1,0 +1,111 @@
+/* Tokens do painel.
+   As cores de sinal vêm das barras de teste de vídeo (SMPTE) e cada uma tem um papel fixo:
+   amarelo = processando, ciano = economia/pronto, azul = na fila, vermelho = falha, magenta = ajuste personalizado.
+   --x preenche superfícies; --x-ink é a variante legível como texto sobre o painel. */
+
+:root {
+  color-scheme: dark;
+
+  /* superfícies */
+  --bg: #0d0f12;
+  --panel: #14171b;
+  --panel-raised: #1b1f24;
+  --line: #252a31;
+  --line-strong: #39404a;
+
+  /* texto */
+  --text: #eceff2;
+  --muted: #98a2ad;
+  --faint: #7b8590;
+
+  /* sinais */
+  --live: #f0c93a;
+  --live-ink: #f0c93a;
+  --live-display: #f0c93a; /* amarelo para figuras grandes (contraste 3:1 basta) */
+  --live-soft: rgb(240 201 58 / 0.14);
+  --saved: #3ccfc9;
+  --saved-ink: #3ccfc9;
+  --saved-soft: rgb(60 207 201 / 0.14);
+  --queued: #7b8fff;
+  --queued-ink: #93a3ff;
+  --queued-soft: rgb(123 143 255 / 0.16);
+  --fault: #f2616b;
+  --fault-ink: #ff7f88;
+  --fault-soft: rgb(242 97 107 / 0.14);
+  --custom: #c86bd6;
+  --custom-ink: #dc90e8;
+  --custom-soft: rgb(200 107 214 / 0.16);
+  --on-signal: #17130a;
+  --saved-hatch: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--saved) 38%, transparent) 4px 6px);
+
+  /* barras de teste: iguais nos dois temas */
+  --bar-white: #bfbfbf;
+  --bar-yellow: #bfbf00;
+  --bar-cyan: #00bfbf;
+  --bar-green: #00bf00;
+  --bar-magenta: #bf00bf;
+  --bar-red: #bf0000;
+  --bar-blue: #0000bf;
+  --bar-black: #131313;
+
+  /* tipografia */
+  --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-figure: "DIN Alternate", "Bahnschrift", "Avenir Next Condensed", system-ui, sans-serif;
+  --font-display: "DIN Condensed", "Bahnschrift", "Avenir Next Condensed", "Arial Narrow", sans-serif;
+  --font-code: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-md: 0.875rem;
+  --fs-lg: 1rem;
+  --fs-xl: 1.25rem;
+  --fs-2xl: 1.75rem;
+
+  /* espaço */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+
+  /* forma: a moldura é mais redonda que os controles; os painéis internos são retos */
+  --r-frame: 16px;
+  --r-ctl: 6px;
+  --r-pill: 999px;
+
+  /* movimento */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg: #dde0e4;
+    --panel: #f5f6f7;
+    --panel-raised: #ffffff;
+    --line: #d5d9de;
+    --line-strong: #b4bcc5;
+
+    --text: #14181d;
+    --muted: #4f5a65;
+    --faint: #66717c;
+
+    --live: #e8bb00;
+    --live-ink: #7a5c00;
+    --live-display: #a37a00;
+    --live-soft: rgb(232 187 0 / 0.18);
+    --saved: #12aaa4;
+    --saved-ink: #0b7a76;
+    --saved-soft: rgb(18 170 164 / 0.16);
+    --queued: #5a70f0;
+    --queued-ink: #3550d1;
+    --queued-soft: rgb(90 112 240 / 0.14);
+    --fault: #e0404e;
+    --fault-ink: #c42b3a;
+    --fault-soft: rgb(224 64 78 / 0.12);
+    --custom: #b04cc0;
+    --custom-ink: #9230a3;
+    --custom-soft: rgb(176 76 192 / 0.14);
+  }
+}
