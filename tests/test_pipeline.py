@@ -569,7 +569,7 @@ class TestPainel(Base):
         (self.inc / "z.pdf").write_bytes(b"x")
         self.p.scan(); self.p.db.execute("UPDATE jobs SET state='QUEUED' WHERE state='WAITING_STABLE'"); self.p.db.commit()
         snap = vp.DashboardData(self.cfg).snapshot()
-        self.assertFalse(snap["running"])
+        self.assertFalse(snap["running"]); self.assertEqual(snap["session"], [])  # sem execução ativa não há "sessão"
         self.assertEqual((snap["done"]["count"], snap["done"]["copied"]), (2, 1))
         self.assertGreater(snap["done"]["saved"], 0)
         self.assertEqual([q["rel"] for q in snap["queue"]], ["z.pdf", "aula/b.mp4"])  # não-vídeo antes

@@ -1014,7 +1014,7 @@ class DashboardData:
 
     def snapshot(self):
         now, pid = time.time(), peek_pid(self.home / "state")
-        out = dict(now=now, running=pid is not None, pid=pid, current=None, queue=[], waiting=[], failed=[],
+        out = dict(now=now, running=pid is not None, pid=pid, current=None, session=[], queue=[], waiting=[], failed=[],
                    done=dict(count=0, original=0, output=0, saved=0, percent=0.0, kept=0, copied=0),
                    forecast=dict(bytes=0, saved=0, percent=0.0), eta=dict(seconds=None, approx=False), recent=[])
         dbfile = self.home / "state" / "pipeline.sqlite3"
@@ -1051,6 +1051,15 @@ class DashboardData:
             sec_per_byte = e["t"] / e["o"] if e["o"] else None
             out["recent"] = [dict(name=r["remote_rel"], original=r["original_size"], output=r["output_size"], percent=r["savings_percent"] or 0.0,
                                   decision=r["decision"]) for r in q("SELECT * FROM jobs WHERE state='COMPLETED' ORDER BY updated_at DESC LIMIT 8")]
+            out["session"] = []  # concluídos desde que a execução atual começou (o `run` regrava o lock ao iniciar)
+            if pid is not None:
+                try:
+                    t0 = (self.home / "state" / "pipeline.lock").stat().st_mtime - 1
+                except OSError:
+                    t0 = now
+                out["session"] = [dict(rel=r["remote_rel"] or r["src_rel"], t=r["encoding_time"] or 0, original=r["original_size"] or 0, output=r["output_size"] or 0,
+                                       percent=r["savings_percent"] or 0.0)
+                                  for r in q("SELECT * FROM jobs WHERE state='COMPLETED' AND updated_at>=? ORDER BY updated_at LIMIT 400", t0)]
             prog = self.progress() if pid is not None else None
             rows = order_queue(q("SELECT * FROM jobs WHERE state IN ('QUEUED','PROCESSING')"), self.exts)
             budget, eta, approx, vid_bytes = [8], 0.0, mismatch, 0

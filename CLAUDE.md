@@ -28,7 +28,7 @@ Idioma de trabalho: português (Brasil). Leia o [README.md](README.md) (resumo e
 ```
 main.py                      pipeline + CLI + servidor do painel (arquivo único)
 config/config.json           configuração
-dashboard/index.html         interface web (python3 main.py app → http://127.0.0.1:8765)
+dashboard/index.html         interface web em abas: Início (soltar / ao vivo + linha do tempo), Fila, Resultados, Compressão (python3 main.py app → http://127.0.0.1:8765)
 scripts/healthcheck.sh       diagnóstico
 tests/                       67 testes: python3 -m unittest discover -s tests
 docs/GUIA.md, docs/painel.jpg  guia completo e imagem do README (README.md é curto: resumo + comandos)
@@ -42,6 +42,7 @@ my-videos/                   dados, ignorados pelo git (.gitkeep mantém a estru
 - Escrita (POST) exige o token por abertura da página (`X-VP-Token`, embutido no HTML) e `Host` em 127.0.0.1/localhost:porta. `/api/upload` só aceita com o processamento parado (409 se `peek_pid`) e grava em `incoming/<rel>.part` e renomeia (nunca sobrescreve: sufixo ` (n)`; preserva mtime; recusa `..`, absolutos e ocultos via `incoming_target`); `/api/start` = `spawn_run`; `/api/stop` = `stop_run` (killpg só se o processo for líder do grupo).
 - Ajustes de compressão: o padrão é `default_settings(cfg)` (config.json = o processo de sempre; `build_ffmpeg_cmd` com o padrão gera o mesmo comando de antes, coberto por teste). O painel salva ajustes validados (`clean_settings`: só listas/faixas conhecidas) em `state/encoding.json` (`save_settings`/`effective_settings`); `Pipeline.profile()` devolve ('custom', ajustes) quando diferem. Só editáveis com o processamento parado (409). Cada job guarda `settings` (JSON); ETA e previsão usam o histórico com os mesmos ajustes (legado NULL = padrão).
 - Pastas vazias de `incoming/`: `prune_if_enabled()` roda antes da fila e depois de cada arquivo (não só no fim); `prune_chain` continua removendo na hora a pasta cujo último arquivo foi arquivado.
+- Snapshot do painel inclui `session` (concluídos desde o início da execução atual, via mtime do lock) para a linha do tempo; a largura dos segmentos é proporcional ao tempo de encode (feitos: `encoding_time`; fila: `est`).
 - Progresso ao vivo: `Pipeline.encode` roda o ffmpeg com `-progress pipe:1` e grava `state/progress.json` (~1 s; apagado ao fim e no `recover`).
 - `run_once` reescaneia antes de sair, para pegar arquivos enviados durante o processamento (só continua para jobs novos).
 - SQLite em WAL; `place()` calcula o SHA da origem durante a cópia (`copy_hashed`); `scan()` usa `walk_incoming` + 1 consulta.

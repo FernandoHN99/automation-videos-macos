@@ -122,12 +122,14 @@ Exemplo de log:
 
 ## Painel (interface web)
 
-`python3 main.py app` abre http://127.0.0.1:8765 no navegador. Pelo painel você:
+`python3 main.py app` abre http://127.0.0.1:8765 no navegador. A tela tem quatro abas, e só aparece o que faz sentido no momento:
 
-- **arrasta** vídeos e pastas inteiras (ou usa *Escolher arquivos / Escolher pasta*); a estrutura de pastas é mantida e arquivos ocultos (`.DS_Store`...) são ignorados. A área de soltar fica **bloqueada enquanto o processamento roda** (o servidor também recusa o envio); para adicionar mais arquivos, pare ou aguarde terminar;
-- clica em **Enviar e iniciar**: os arquivos vão para `my-videos/incoming/` (sem sobrescrever; a data original é preservada, então entram na fila na hora) e o processamento começa;
-- acompanha, a cada 2 s: o vídeo atual (% e velocidade ao vivo, tamanho parcial), a fila na ordem real com o horário previsto de cada item, o horário previsto de término, a economia até agora e a redução prevista da fila;
-- clica em **Parar** (com confirmação) para interromper; o vídeo em andamento volta à fila no próximo início.
+- **Início:** com o processamento parado, é a área de soltar (arraste vídeos e pastas inteiras, ou use *Escolher arquivos / Escolher pasta*; a estrutura é mantida e arquivos ocultos como `.DS_Store` são ignorados). **Enviar e iniciar** manda tudo para `my-videos/incoming/` (sem sobrescrever; a data original é preservada, então entram na fila na hora) e começa. Rodando, vira a visão ao vivo: o vídeo atual com % e velocidade, e uma **linha do tempo da fila** (cada aula é um segmento com largura proporcional ao tempo de compressão: verde = pronto, azul = atual, vazado = próximos).
+- **Fila:** a fila na ordem real, com o horário previsto de cada item. Aguardando estabilizar e Falhas só aparecem se existirem.
+- **Resultados:** quanto foi economizado, antes e depois, previsão para a fila e os últimos concluídos (some o conteúdo até haver o primeiro).
+- **Compressão:** o processo atual em português e os ajustes (veja abaixo).
+
+Botões só quando fazem sentido: **Parar** só aparece rodando (com confirmação; o vídeo em andamento volta à fila no próximo início). Enquanto roda, o envio de arquivos e os ajustes ficam bloqueados (o servidor também recusa). O aviso de pouco disco só aparece abaixo de 10 GB. As abas guardam a posição na URL (`#fila`...) e funcionam pelo teclado (setas).
 
 ### Compressão: o que acontece com cada vídeo (e como ajustar)
 
