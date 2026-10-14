@@ -371,6 +371,33 @@ class TestModoLocal(Base):
         self.assertEqual([d.name for d in self.inc.iterdir() if not d.name.startswith(".")], [])  # tudo limpo
         self.assertTrue(self.inc.is_dir())                                                          # a raiz nunca some
 
+    def test_pasta_some_assim_que_o_ultimo_arquivo_e_arquivado(self):
+        self.p.prune_empty_dirs = lambda: None  # desliga a varredura: só a limpeza imediata pode remover
+        (self.inc / "a" / "b" / "c").mkdir(parents=True)
+        (self.inc / "a" / "b" / "c" / "x.pdf").write_bytes(b"1")
+        (self.inc / "a" / "b" / "c" / ".DS_Store").write_bytes(b"x")
+        (self.inc / "a" / "b" / "y.pdf").write_bytes(b"2")
+        (self.inc / "outra").mkdir(); (self.inc / "outra" / "parcial.mp4.part").write_bytes(b"3")  # temporário: não é processado
+        self.run_cycle()
+        self.assertFalse((self.inc / "a").exists())                       # a, a/b e a/b/c esvaziaram e sumiram
+        self.assertTrue((self.p.d["originals"] / "a" / "b" / "c" / "x.pdf").exists())
+        self.assertTrue((self.inc / "outra" / "parcial.mp4.part").exists())  # pasta com conteúdo pendente é mantida
+        self.assertTrue(self.inc.is_dir())
+
+    def test_pasta_com_arquivo_ainda_nao_processado_nao_e_removida(self):
+        self.p.prune_empty_dirs = lambda: None
+        (self.inc / "a").mkdir()
+        (self.inc / "a" / "pronto.pdf").write_bytes(b"1")
+        make_video(self.inc / "a" / "video.mp4", seconds=1)
+        real = self.p.process
+        def so_o_pdf(job):  # simula o vídeo ainda pendente: só processa o pdf
+            if job["src_rel"].endswith(".pdf"):
+                real(job)
+        self.p.process = so_o_pdf
+        self.run_cycle()
+        self.assertTrue((self.inc / "a" / "video.mp4").exists())          # pasta continua, pois ainda tem o vídeo
+        self.assertFalse((self.inc / "a" / "pronto.pdf").exists())
+
     def test_pasta_vazia_recente_ou_com_arquivo_pendente_e_mantida(self):
         self.cfg["pipeline"]["file_stability_seconds"] = 3600
         (self.inc / "copiando" / "sub").mkdir(parents=True)      # pasta nova: usuário pode estar copiando

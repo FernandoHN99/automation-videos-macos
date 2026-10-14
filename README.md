@@ -32,7 +32,7 @@ flowchart LR
 3. **Vídeos** são analisados, comprimidos e **validados** (resolução, duração, codec, áudio). Se a economia for menor que 15%, o original é copiado como está, sem perda geracional.
 4. **Qualquer outro arquivo** (PDF, imagem, zip, planilha...) é copiado igual, conferido por SHA-256, com a data original preservada. Eles são processados **primeiro**; os vídeos ficam por último, para os materiais não esperarem uma conversão longa.
 5. O resultado fica em `my-videos/ready/`, **com a mesma estrutura de pastas**, pronto para você arrastar para o microSD.
-6. Depois de pronto e validado, cada original é **movido** de `incoming/` para `my-videos/originals/`, e as pastas que ficarem vazias em `incoming/` são removidas. Tudo fica registrado em SQLite e em logs.
+6. Depois de pronto e validado, cada original é **movido** de `incoming/` para `my-videos/originals/`, e a pasta que ficar vazia em `incoming/` é removida **na hora em que o último arquivo dela é arquivado** (subindo até a raiz). Tudo fica registrado em SQLite e em logs.
 
 ## Recursos
 
@@ -46,7 +46,7 @@ flowchart LR
 | 🛰️ **Upload SSH opcional** | modo `upload`: verifica UUID/exFAT do microSD, SHA-256 e publica de forma atômica |
 | 🔒 **Uma execução por vez** | `flock` do kernel: nunca fica "preso", nunca converte dois vídeos juntos |
 | 🌙 **Não deixa o Mac dormir** | enquanto processa, bloqueia a suspensão (`caffeinate`); em segundo plano, continua mesmo fechando o Terminal |
-| 🧪 **Testado** | 48 testes automatizados + execução real de ponta a ponta |
+| 🧪 **Testado** | 50 testes automatizados + execução real de ponta a ponta |
 
 ## Estrutura do projeto
 
@@ -202,7 +202,7 @@ Nesse modo, antes de **cada** envio o servidor precisa passar: SSH ok, `/srv/vid
 python3 -m unittest discover -s support/tests -v
 ```
 
-48 testes (~10 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
+50 testes (~10 s) com servidor simulado em diretório temporário e vídeos sintéticos gerados pelo ffmpeg. Cobrem arquivo novo/alterado/em transferência, sem áudio, nomes com acentos e espaços, arquivo corrompido, falha do ffmpeg, SSH fora, microSD desmontado, sem espaço, conflito de nomes, hash divergente, recuperação após queda, execuções simultâneas e dry-run.
 
 ## Registro de testes reais (2026-10-13)
 

@@ -545,6 +545,18 @@ class Pipeline:
             n += 1
         os.replace(src, dst)  # mesmo filesystem (my-videos/ e incoming/ no mesmo volume)
         self.log.info("Original arquivado: originals/%s", dst.relative_to(self.d["originals"]))
+        self.prune_chain(src.parent)  # se este era o último arquivo da pasta, ela some agora
+
+    def prune_chain(self, d):
+        """Sobe de `d` até incoming/ removendo as pastas que ficaram vazias (.DS_Store não conta como conteúdo)."""
+        inc = self.d["incoming"]
+        while d != inc and inc in d.parents:
+            if any(c.name != ".DS_Store" for c in d.iterdir()):
+                break
+            (d / ".DS_Store").unlink(missing_ok=True)
+            d.rmdir()
+            self.log.info("Pasta vazia removida de incoming/: %s", d.relative_to(inc))
+            d = d.parent
 
     def keep_awake(self):
         """Impede o Mac de suspender enquanto este processo roda. O caffeinate fica preso ao nosso PID (-w):
@@ -611,7 +623,7 @@ class Pipeline:
         return n
 
     def prune_empty_dirs(self):
-        """Remove de incoming/ as pastas que ficaram vazias (só com .DS_Store) depois de arquivar os originais.
+        """Varredura de segurança: remove de incoming/ pastas vazias que já estavam lá (ou que o prune_chain não pegou).
         Só mexe em pasta sem alteração há `file_stability_seconds`, para não atrapalhar uma cópia em andamento."""
         stab = self.cfg["pipeline"].get("file_stability_seconds", 180)
         inc, now = self.d["incoming"], time.time()
